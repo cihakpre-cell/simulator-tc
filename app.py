@@ -93,32 +93,78 @@ if tmy_file and char_file:
 
         df_sim = pd.DataFrame(res, columns=['Temp', 'Q_need', 'Q_tc', 'Q_biv', 'El_tc', 'El_biv'])
 
-        # 4. EKONOMIKA
+        # --- 4. EKONOMIKA A BILANCE ---
         naklady_czt = (spotreba_ut + spotreba_tuv) * (cena_gj_czt * 3.6)
-        el_total_mwh = (df_sim['El_tc'].sum() + df_sim['El_biv'].sum()) / 1000
-        naklady_tc = el_total_mwh * cena_el + 17000
+        el_tc_rok_mwh = df_sim['El_tc_kW'].sum() / 1000
+        el_biv_rok_mwh = df_sim['El_biv_kW'].sum() / 1000
+        naklady_tc = (el_tc_rok_mwh + el_biv_rok_mwh) * cena_el + 17000
         uspora = naklady_czt - naklady_tc
         navratnost = investice / uspora if uspora > 0 else 0
 
-        # --- ZOBRAZENÍ ---
-        st.success(f"Analýza projektu {nazev_projektu} hotova.")
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Roční úspora", f"{uspora:,.0f} Kč")
-        m2.metric("Návratnost", f"{navratnost:.1f} let")
-        m3.metric("Spotřeba elektřiny", f"{el_total_mwh:.1f} MWh")
+        # Příprava měsíční tabulky (to co bylo v Colabu)
+        # Předpokládáme, že TMY má 8760 řádků (365 dní * 24h)
+        df_sim['Month'] = (df_sim.index // (24 * 30.5)).astype(int) + 1 # Jednoduchý odhad měsíce
+        df_sim['Month'] = df_sim['Month'].clip(1, 12)
+        
+        mesicni_df = df_sim.groupby('Month').agg({
+            'Temp': 'mean',
+            'Q_need_kW': 'sum',
+            'Q_tc_kW': 'sum',
+            'Q_biv_kW': 'sum',
+            'El_tc_kW': 'sum'
+        }).reset_index()
+        
+        # Převod na MWh pro tabulku
+        for col in ['Q_need_kW', 'Q_tc_kW', 'Q_biv_kW', 'El_tc_kW']:
+            mesicni_df[col] = mesicni_df[col] / 1000
+        
+        mesicni_df.columns = ['Měsíc', 'Prům. teplota [°C]', 'Potřeba [MWh]', 'Krytí TČ [MWh]', 'Bivalence [MWh]', 'Spotřeba el. [MWh]']
 
-        # Graf
-        fig, ax = plt.subplots(figsize=(10, 4))
-        tx = np.linspace(-15, 20, 100)
-        qy = [ztrata * (20 - t) / (20 - t_design) * k_oprava + q_tuv_avg for t in tx]
-        py = [np.interp(t, df_char[t_col], df_char[v_col]) * pocet_tc for t in tx]
-        ax.plot(tx, qy, 'r', label='Potřeba domu')
-        ax.plot(tx, py, 'b--', label='Výkon kaskády')
-        ax.fill_between(tx, [min(a,b) for a,b in zip(qy,py)], qy, color='red', alpha=0.1)
-        ax.set_xlabel("Teplota [°C]"); ax.set_ylabel("Výkon [kW]"); ax.legend(); ax.grid(True)
-        st.pyplot(fig)
+        # --- 5. ZOBRAZENÍ V ZÁLOŽKÁCH ---
+        st.header(f"📊 Komplexní analýza: {nazev_projektu}")
+        
+        tab1, tab2, tab3 = st.tabs(["💰 Ekonomický přehled", "📅 Měsíční bilance", "📈 Detailní grafy"])
 
-    except Exception as e:
-        st.error(f"Chyba při zpracování: {e}")
-else:
-    st.info("Nahrajte soubory vlevo pro spuštění výpočtu.")
+        with tab1:
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.subheader("Finanční přínos")
+                st.metric("Roční úspora", f"{uspora:,.0f} Kč")
+                st.metric("Návratnost investice", f"{navratnost:.1f} let")
+            with col_b:
+                st.subheader("Provozní náklady")
+                st.write(f"**Původní náklady (CZT):** {naklady_czt:,.0f} Kč")
+                st.write(f"**Nové náklady (Elektřina):** {naklady_tc:,.0f} Kč")
+                st.write(f"**Investiční náklady:** {investice:,.0f} Kč")
+
+        with tab2:
+            st.subheader("Tabulka měsíčních odběrů a krytí")
+            st.dataframe(mesicni_df.style.format(precision=2), use_container_width=True)
+            
+            # Výpočet SCOP
+            scop_projekt = df_sim['Q_tc_kW'].sum() / df_sim['El_tc_kW'].sum() if df_sim['El_tc_kW'].sum() > 0 else 0
+            st.info(f"**Průměrný sezónní topný faktor (SCOP) kaskády: {scop_projekt:.2f}**")
+
+        with tab3:
+            st.subheader("Výkonová křivka a bod bivalence")
+            fig, ax = plt.subplots(figsize=(10, 4))
+            tx = np.linspace(-15, 20, 100)
+            qy = [ztrata * (20 - t) / (20 - t_design) * k_oprava + q_tuv_avg for t in tx]
+            py = [np.interp(t, df_char[t_col], df_char[v_col]) * pocet_tc for t in tx]
+            ax.plot(tx, qy, 'r', label='Potřeba tepla objektu')
+            ax.plot(tx, py, 'b--', label='Maximální výkon kaskády TČ')
+            ax.fill_between(tx, [min(a,b) for a,b in zip(qy,py)], qy, color='red', alpha=0.1, label='Oblast bivalence (E-kotel)')
+            ax.set_xlabel("Venkovní teplota [°C]")
+            ax.set_ylabel("Výkon [kW]")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            st.pyplot(fig)
+
+        # Export (zůstává stejný)
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_sim.to_excel(writer, index=False, sheet_name='Hodinova_data')
+            mesicni_df.to_excel(writer, index=False, sheet_name='Mesicni_bilance')
+        
+        st.download_button("📥 Stáhnout kompletní report (Excel)", output.getvalue(), f"analyza_{nazev_projektu}.xlsx")
+
