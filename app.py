@@ -28,7 +28,7 @@ def load_char(file):
     except: return None
 
 # --- KONFIGURACE ---
-st.set_page_config(page_title="Simulator TC v3.7 - FULL REPORT", layout="wide")
+st.set_page_config(page_title="Simulator TC v3.8 - TABLE FIX", layout="wide")
 
 with st.sidebar:
     st.header("⚙️ Konfigurace")
@@ -95,9 +95,19 @@ if tmy_file and char_file:
         uspora = naklady_czt - naklady_tc
         navratnost = investice / uspora if uspora > 0 else 0
 
+        # TABULKA BIVALENCE (DOPLNĚNA)
+        q_tc_s, q_bv_s = df_sim['Q_tc'].sum()/1000, df_sim['Q_biv'].sum()/1000
+        el_tc_s, el_bv_s = df_sim['El_tc'].sum()/1000, df_sim['El_biv'].sum()/1000
+        df_biv_table = pd.DataFrame({
+            "Metrika": ["Tepelná energie (Výstup)", "Spotřeba elektřiny (Vstup)"],
+            "TČ [MWh]": [round(q_tc_s, 2), round(el_tc_s, 2)],
+            "Bivalence [MWh]": [round(q_bv_s, 2), round(el_bv_s, 2)],
+            "Podíl bivalence [%]": [round(q_bv_s/(q_tc_s+q_bv_s)*100, 1), round(el_bv_s/(el_tc_s+el_bv_s)*100, 1)]
+        })
+
         st.header(f"📊 Projekt: {nazev_projektu}")
 
-        # --- GRAFY 1 a 2 ---
+        # --- GRAFY 1-5 (BEZ ZMĚN) ---
         fig12, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
         tr = np.linspace(-15, 18, 100)
         q_p = np.array([(ztrata * (t_vnitrni - t) / (t_vnitrni - t_design) * k_oprava) + q_tuv_avg for t in tr])
@@ -105,7 +115,6 @@ if tmy_file and char_file:
         ax1.plot(tr, q_p, 'r-', lw=2, label='Potřeba (ÚT+TUV)')
         ax1.plot(tr, p_p, 'b--', alpha=0.4, label='Max kaskáda TČ')
         ax1.fill_between(tr, p_p, q_p, where=(q_p > p_p), color='red', alpha=0.2, hatch='XXXX', label='Oblast bivalence')
-        # OPRAVA: Popisek a čára bivalence
         ax1.axvline(t_biv_val, color='black', linestyle=':', lw=2, label=f'Bod bivalence: {t_biv_val:.1f}°C')
         ax1.set_title("1. DYNAMIKA PROVOZU"); ax1.set_xlabel("Venkovní teplota [°C]"); ax1.set_ylabel("Výkon [kW]"); ax1.legend()
         
@@ -116,7 +125,6 @@ if tmy_file and char_file:
         ax2.set_title("2. ENERGETICKÝ MIX DLE TEPLOT"); ax2.set_xlabel("Venkovní teplota [°C]"); ax2.set_ylabel("Energie [kWh]"); ax2.legend()
         st.pyplot(fig12)
 
-        # --- GRAFY 3 a 4 ---
         fig34, (ax3, ax4) = plt.subplots(1, 2, figsize=(18, 7))
         df_sim['Month'] = (df_sim.index // (24 * 30.5)).astype(int) + 1
         m_df = df_sim.groupby('Month').agg({'Q_tc': 'sum', 'Q_biv': 'sum'})
@@ -132,7 +140,6 @@ if tmy_file and char_file:
         ax4.set_title("4. TRVÁNÍ POTŘEBY VÝKONU (MONOTÓNA)"); ax4.set_xlabel("Hodin v roce [h]"); ax4.set_ylabel("Výkon [kW]"); ax4.legend()
         st.pyplot(fig34)
 
-        # --- GRAF 5 (NÁVRAT) ---
         fig5, ax5 = plt.subplots(figsize=(18, 5))
         df_st = df_sim.sort_values('Temp').reset_index(drop=True)
         ax5.plot(df_st.index, df_st['Q_need'], 'r', label='Potřeba ÚT+TUV')
@@ -140,43 +147,50 @@ if tmy_file and char_file:
         ax5.set_title("5. ČETNOST TEPLOT V ROCE"); ax5.set_xlabel("Seřazené hodiny dle teploty"); ax5.set_ylabel("Výkon [kW]"); ax5.legend()
         st.pyplot(fig5)
 
-        # --- GRAFY 6 a 7 ---
+        # --- GRAFY 6 a 7 + TABULKA (DOPLNĚNA TABULKA) ---
         st.markdown("---")
         c_l, c_r = st.columns(2)
-        q_tc_s, q_bv_s = df_sim['Q_tc'].sum()/1000, df_sim['Q_biv'].sum()/1000
         with c_l:
+            st.subheader("6. Bilance bivalence")
+            st.table(df_biv_table) # TABULKA VRÁCENA SEM
             fig6, ax6 = plt.subplots(figsize=(6, 6))
             ax6.pie([q_tc_s, q_bv_s], labels=['TČ', 'Biv'], autopct='%1.1f%%', colors=['#ADD8E6', '#FF0000'])
-            ax6.set_title("6. PODÍL DODANÉ ENERGIE"); st.pyplot(fig6)
+            ax6.set_title("PODÍL DODANÉ ENERGIE"); st.pyplot(fig6)
         with c_r:
+            st.subheader("7. Ekonomika")
             fig7, ax7 = plt.subplots(figsize=(6, 6))
             ax7.bar(['CZT', 'TČ'], [naklady_czt, naklady_tc], color=['#95a5a6', '#2ecc71'])
-            ax7.set_title("7. EKONOMICKÉ POROVNÁNÍ"); ax7.set_ylabel("Kč / rok"); st.pyplot(fig7)
+            ax7.set_title("EKONOMICKÉ POROVNÁNÍ"); ax7.set_ylabel("Kč / rok"); st.pyplot(fig7)
 
-        # --- PDF GENERÁTOR ---
-        def generate_pdf_final():
+        # --- PDF GENERÁTOR (DOPLNĚNA TABULKA DO PDF) ---
+        def generate_pdf_v38():
             pdf = FPDF()
             def cz(txt): return txt.encode('cp1250', errors='replace').decode('latin1')
             
-            # Strana 1: Text a Grafy 1-2
             pdf.add_page()
             pdf.set_font("Helvetica", "B", 16)
             pdf.cell(0, 10, cz(f"REPORT: {nazev_projektu.upper()}"), ln=True, align="C")
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.ln(5); pdf.cell(0, 8, cz(f"Bod bivalence: {t_biv_val:.1f} C"), ln=True)
-            pdf.cell(0, 8, cz(f"Uspora: {uspora:,.0f} Kc/rok | Navratnost: {navratnost:.1f} let"), ln=True)
             
+            pdf.ln(5); pdf.set_font("Helvetica", "B", 11); pdf.cell(0, 8, cz("1. PARAMETRY A EKONOMIKA"), ln=True)
+            pdf.set_font("Helvetica", "", 10)
+            pdf.cell(0, 6, cz(f"- Bod bivalence: {t_biv_val:.1f} C"), ln=True)
+            pdf.cell(0, 6, cz(f"- Rocni uspora: {uspora:,.0f} Kc | Navratnost: {navratnost:.1f} let"), ln=True)
+            
+            # TABULKA DO PDF (Pod bodem 1)
+            pdf.ln(3); pdf.set_font("Helvetica", "B", 10); pdf.cell(0, 8, cz("TABULKA BILANCE BIVALENCE:"), ln=True)
+            pdf.set_font("Helvetica", "", 9)
+            pdf.cell(0, 6, cz(f"Vystupni energie: TC {df_biv_table.iloc[0,1]} MWh | Biv {df_biv_table.iloc[0,2]} MWh | Podil {df_biv_table.iloc[0,3]} %"), ln=True)
+            pdf.cell(0, 6, cz(f"Vstupni elektrina: TC {df_biv_table.iloc[1,1]} MWh | Biv {df_biv_table.iloc[1,2]} MWh | Podil {df_biv_table.iloc[1,3]} %"), ln=True)
+
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f1:
                 fig12.savefig(f1.name, dpi=100); pdf.image(f1.name, x=10, y=pdf.get_y()+5, w=190)
             
-            # Strana 2: Grafy 3-4-5
             pdf.add_page()
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f2:
                 fig34.savefig(f2.name, dpi=100); pdf.image(f2.name, x=10, y=10, w=190)
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f5:
                 fig5.savefig(f5.name, dpi=100); pdf.image(f5.name, x=10, y=110, w=190)
             
-            # Strana 3: Grafy 6-7
             pdf.add_page()
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f3:
                 fig7.savefig(f3.name, dpi=100); pdf.image(f3.name, x=10, y=10, w=90)
@@ -186,5 +200,5 @@ if tmy_file and char_file:
             return bytes(pdf.output())
 
         st.sidebar.markdown("---")
-        if st.sidebar.button("📄 Stáhnout kompletní PDF (7 grafů)"):
-            st.sidebar.download_button("📥 Uložit PDF", generate_pdf_final(), f"Report_{nazev_projektu}.pdf")
+        if st.sidebar.button("📄 Uložit PDF (včetně tabulky)"):
+            st.sidebar.download_button("📥 Stáhnout", generate_pdf_v38(), f"Report_{nazev_projektu}.pdf")
