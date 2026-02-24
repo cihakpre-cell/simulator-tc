@@ -31,7 +31,7 @@ def load_char(file):
         return df[['Teplota', 'Vykon_kW', 'COP']].apply(pd.to_numeric, errors='coerce').dropna()
     except: return None
 
-# --- KONFIGURACE ---
+# --- KONFIGURACE STRÁNKY ---
 st.set_page_config(page_title="Expertní simulátor TČ", layout="wide")
 
 with st.sidebar:
@@ -43,8 +43,6 @@ with st.sidebar:
     f_tuv = st.number_input("Spotřeba TUV [MWh/rok]", value=76.0)
     pocet_tc = st.slider("Počet TČ v kaskádě", 1, 10, 3)
     cena_el_mwh = st.number_input("Cena elektřiny [Kč/MWh]", value=4800.0)
-    investice = st.number_input("Investice [Kč]", value=3800000.0)
-    servis = st.number_input("Roční servis [Kč]", value=17000.0)
 
 tmy_up = st.file_uploader("Nahrajte TMY (CSV)", type="csv")
 char_up = st.file_uploader("Nahrajte Charakteristiku (CSV)", type="csv")
@@ -71,23 +69,15 @@ if tmy_up and char_up:
 
         df_sim = pd.DataFrame(res, columns=['Temp', 'Q_need', 'Q_tc', 'Q_biv', 'El_tc', 'El_biv'])
         
-        # Výpočty pro bilanci
-        q_tc_sum = df_sim['Q_tc'].sum() / 1000
-        q_biv_sum = df_sim['Q_biv'].sum() / 1000
-        q_total_sum = q_tc_sum + q_biv_sum
-        
-        el_tc_sum = df_sim['El_tc'].sum() / 1000
-        el_biv_sum = df_sim['El_biv'].sum() / 1000
-        el_total_sum = el_tc_sum + el_biv_sum
-
+        # Bod bivalence
         t_biv = -12.0
         for t in np.linspace(15, -15, 500):
             if (np.interp(t, char['Teplota'], char['Vykon_kW']) * pocet_tc) < ((ztrata_celkova * (20 - t) / (20 - t_design) * k_oprava) + q_tuv_avg):
                 t_biv = t
                 break
 
-        # --- VIZUALIZACE ---
-        fig = plt.figure(figsize=(16, 12))
+        # --- VIZUALIZACE 2x2 ---
+        fig = plt.figure(figsize=(18, 14))
         
         # 1. GRAF: DYNAMIKA (FIXNÍ)
         ax1 = plt.subplot(2, 2, 1)
@@ -113,29 +103,39 @@ if tmy_up and char_up:
         ax2.set_title("ROZDĚLENÍ ENERGIE DLE VENKOVNÍ TEPLOTY", fontweight='bold')
         ax2.legend(fontsize=8); ax2.grid(alpha=0.1, axis='y')
 
-        # 3. GRAF: VÝSEČOVÝ GRAF (Dle přílohy)
+        # 3. GRAF: BILANCE (FIXNÍ + OPRAVENÁ TABULKA)
         ax3 = plt.subplot(2, 2, 3)
-        ax3.pie([q_tc_sum, q_biv_sum], labels=['TČ', 'Biv.'], autopct='%1.1f%%', 
-                startangle=90, colors=['#3498db', '#e74c3c'], explode=(0, 0.1), shadow=True)
-        ax3.set_title("PODÍL NA DODANÉM TEPLE (MWh)", fontweight='bold')
-
-        # 4. TABULKA: ENERGETICKÁ BILANCE (Dle přílohy, nahrazuje původní tabulku)
-        ax4 = plt.subplot(2, 2, 4); ax4.axis('off')
-        table_data = [
-            ["Zdroj", "Dodané teplo [MWh]", "Podíl na teple", "Spotřeba el. [MWh]", "Podíl na el."],
-            ["Tepelná čerpadla", f"{q_tc_sum:.1f}", f"{(q_tc_sum/q_total_sum)*100:.1f} %", f"{el_tc_sum:.1f}", f"{(el_tc_sum/el_total_sum)*100:.1f} %"],
-            ["Bivalentní zdroj", f"{q_biv_sum:.1f}", f"{(q_biv_sum/q_total_sum)*100:.1f} %", f"{el_biv_sum:.1f}", f"{(el_biv_sum/el_total_sum)*100:.1f} %"],
-            ["CELKEM", f"{q_total_sum:.1f}", "100 %", f"{el_total_sum:.1f}", "100 %"]
-        ]
+        q_tc_s, q_bv_s = df_sim['Q_tc'].sum()/1000, df_sim['Q_biv'].sum()/1000
+        el_tc_s, el_bv_s = df_sim['El_tc'].sum()/1000, df_sim['El_biv'].sum()/1000
+        total_q, total_el = q_tc_s + q_bv_s, el_tc_s + el_bv_s
         
-        tbl = ax4.table(cellText=table_data, loc='center', cellLoc='center', bbox=[0, 0.2, 1, 0.6])
-        tbl.auto_set_font_size(False)
-        tbl.set_fontsize(10)
-        # Zvýraznění hlavičky a celkového součtu
-        for i in range(5):
-            tbl[(0, i)].set_facecolor("#f2f2f2")
-            tbl[(0, i)].set_text_props(weight='bold')
-            tbl[(3, i)].set_text_props(weight='bold')
+        ax3.pie([q_tc_s, q_bv_s], labels=['TČ', 'Biv.'], autopct='%1.1f%%', startangle=90, colors=['#3498db', '#e74c3c'], wedgeprops=dict(width=0.4))
+        ax3.set_title("ROČNÍ ENERGETICKÁ BILANCE", fontweight='bold')
+        
+        table_data = [
+            ["Zdroj", "Teplo [MWh]", "Teplo [%]", "El. [MWh]", "El. [%]"],
+            ["TČ", f"{q_tc_s:.1f}", f"{(q_tc_s/total_q)*100:.1f}%", f"{el_tc_s:.1f}", f"{(el_tc_s/total_el)*100:.1f}%"],
+            ["Biv.", f"{q_bv_s:.1f}", f"{(q_bv_s/total_q)*100:.1f}%", f"{el_bv_s:.1f}", f"{(el_bv_s/total_el)*100:.1f}%"],
+            ["Suma", f"{total_q:.1f}", "100%", f"{total_el:.1f}", "100%"]
+        ]
+        tbl = ax3.table(cellText=table_data, loc='bottom', cellLoc='center', bbox=[0, -0.45, 1, 0.35])
+        tbl.auto_set_font_size(False); tbl.set_fontsize(9)
+        for i in range(5): tbl[(0, i)].set_facecolor("#f2f2f2")
 
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        # 4. GRAF: ČETNOST TEPLOT (NOVÝ DLE PŘÍLOHY)
+        ax4 = plt.subplot(2, 2, 4)
+        counts = df_sim['Temp'].value_counts().sort_index()
+        colors = ['#e74c3c' if x < t_biv else '#3498db' for x in counts.index]
+        ax4.bar(counts.index, counts.values, color=colors, alpha=0.8, edgecolor='black', lw=0.5)
+        ax4.axvline(t_biv, color='black', ls='--', lw=2, label=f'Bod bivalence {t_biv:.1f}°C')
+        
+        # Popis oblastí
+        ax4.text(t_biv-2, max(counts.values)*0.9, 'Bivalentní\nprovoz', ha='right', color='#e74c3c', fontweight='bold')
+        ax4.text(t_biv+2, max(counts.values)*0.9, 'Monovalentní\nprovoz', ha='left', color='#3498db', fontweight='bold')
+        
+        ax4.set_title("ČETNOST TEPLOT A BOD BIVALENCE", fontweight='bold')
+        ax4.set_xlabel("Venkovní teplota [°C]"); ax4.set_ylabel("Počet hodin v roce")
+        ax4.grid(alpha=0.2); ax4.legend(loc='upper left', fontsize=8)
+
+        plt.tight_layout(rect=[0, 0.05, 1, 0.95])
         st.pyplot(fig)
