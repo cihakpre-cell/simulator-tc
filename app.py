@@ -3,10 +3,16 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import io
+import unicodedata
 from fpdf import FPDF
 import tempfile
 
-# --- POMOCNÉ FUNKCE ---
+# --- FUNKCE PRO ODSTRANĚNÍ DIAKRITIKY (Pro stabilitu PDF) ---
+def remove_accents(input_str):
+    if not input_str: return ""
+    nfkd_form = unicodedata.normalize('NFKD', input_str)
+    return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
+
 def load_tmy_robust(file):
     try:
         content = file.getvalue().decode('utf-8', errors='ignore').splitlines()
@@ -27,12 +33,12 @@ def load_char(file):
     except: return None
 
 # --- KONFIGURACE STRÁNKY ---
-st.set_page_config(page_title="Expertní simulátor TČ v2.1", layout="wide")
+st.set_page_config(page_title="Expertní simulátor TČ v2.2", layout="wide")
 
 # --- SIDEBAR: KOMPLETNÍ VSTUPY ---
 with st.sidebar:
     st.header("⚙️ Konfigurace projektu")
-    nazev_projektu = st.text_input("Název projektu", "SVJ Sládkovičova")
+    nazev_projektu = st.text_input("Název projektu", "SVJ Sladkovicova")
     
     with st.expander("🏠 Budova a potřeba", expanded=True):
         ztrata = st.number_input("Tepelná ztráta [kW]", value=54.0)
@@ -43,7 +49,7 @@ with st.sidebar:
 
     with st.expander("🔧 Technologie a Teploty", expanded=True):
         pocet_tc = st.slider("Počet TČ v kaskádě", 1, 10, 3)
-        t_spad_ut = st.text_input("Teplotní spád ÚT (např. 55/45)", value="60/50")
+        t_spad_ut = st.text_input("Teplotní spád ÚT", value="60/50")
         t_tuv_vystup = st.number_input("Výstupní teplota TUV [°C]", value=55)
         eta_biv = st.slider("Účinnost bivalence [%]", 80, 100, 98) / 100
 
@@ -98,96 +104,102 @@ if tmy_file and char_file:
                 break
 
         # --- GRAFICKÁ ČÁST ---
-        st.header(f"📊 Report projektu: {nazev_projektu}")
+        st.header(f"📊 Projekt: {nazev_projektu}")
         
-        # Horní blok grafů
-        fig_main = plt.figure(figsize=(18, 12))
+        # Horní blok grafů (1 a 2)
+        fig_top, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
         
         # 1. DYNAMIKA S OPRAVENÝM ŠRAFOVÁNÍM
-        ax1 = plt.subplot(2, 2, 1)
         tr = np.linspace(-15, 18, 100)
         q_p = np.array([(ztrata * (t_vnitrni - t) / (t_vnitrni - t_design) * k_oprava) + q_tuv_avg for t in tr])
         p_p = np.array([np.interp(t, df_char[t_col], df_char[v_col]) * pocet_tc for t in tr])
-        ax1.plot(tr, q_p, 'r-', lw=2, label='Potřeba (ÚT+TUV)')
-        ax1.plot(tr, p_p, 'b--', alpha=0.4, label='Max kaskáda')
-        ax1.plot(tr, np.minimum(q_p, p_p), 'g-', lw=5, alpha=0.4, label='Krytí TČ')
-        # Šrafování bivalence (kde je potřeba vyšší než výkon TČ)
-        ax1.fill_between(tr, p_p, q_p, where=(q_p > p_p), color='red', alpha=0.2, hatch='///', label='Bivalentní provoz')
-        ax1.axvline(t_biv, color='k', ls=':', label=f'Bod bivalence {t_biv:.1f}°C')
+        ax1.plot(tr, q_p, 'r-', lw=2, label='Potreba (UT+TUV)')
+        ax1.plot(tr, p_p, 'b--', alpha=0.4, label='Max kaskada')
+        ax1.plot(tr, np.minimum(q_p, p_p), 'g-', lw=5, alpha=0.4, label='Kryti TC')
+        ax1.fill_between(tr, p_p, q_p, where=(q_p > p_p), color='red', alpha=0.2, hatch='///', label='Bivalence')
+        ax1.axvline(t_biv, color='k', ls=':', label=f'Bivalence {t_biv:.1f}C')
         ax1.set_title("1. DYNAMIKA PROVOZU A MODULACE", fontweight='bold')
-        ax1.set_xlabel("Venkovní teplota [°C]"); ax1.set_ylabel("Výkon [kW]"); ax1.legend(); ax1.grid(alpha=0.2)
+        ax1.set_xlabel("Venkovni teplota [C]"); ax1.set_ylabel("Vykon [kW]"); ax1.legend(); ax1.grid(alpha=0.2)
 
         # 2. ENERGETICKÝ MIX DLE TEPLOTY
-        ax2 = plt.subplot(2, 2, 2)
         df_sim['Temp_R'] = df_sim['Temp'].round()
         df_t = df_sim.groupby('Temp_R')[['Q_tc', 'Q_biv']].sum().sort_index()
-        ax2.bar(df_t.index, df_t['Q_tc'], color='#3498db', label='Energie TČ')
+        ax2.bar(df_t.index, df_t['Q_tc'], color='#3498db', label='Energie TC')
         ax2.bar(df_t.index, df_t['Q_biv'], bottom=df_t['Q_tc'], color='#e74c3c', label='Bivalence')
-        ax2.set_title("2. ROZDĚLENÍ ENERGIE DLE VENKOVNÍ TEPLOTY", fontweight='bold')
-        ax2.set_xlabel("Teplota [°C]"); ax2.set_ylabel("Energie [kWh]"); ax2.legend(); ax2.grid(alpha=0.1, axis='y')
+        ax2.set_title("2. ROZDELENI ENERGIE DLE TEPLOTY", fontweight='bold')
+        ax2.set_xlabel("Teplota [C]"); ax2.set_ylabel("Energie [kWh]"); ax2.legend(); ax2.grid(alpha=0.1, axis='y')
+        st.pyplot(fig_top)
 
+        # Dolní blok grafů (3 a 4)
+        fig_bot, (ax3, ax4) = plt.subplots(1, 2, figsize=(18, 7))
+        
         # 3. MĚSÍČNÍ BILANCE
-        ax3 = plt.subplot(2, 2, 3)
         df_sim['Month'] = (df_sim.index // (24 * 30.5)).astype(int) + 1
         m_df = df_sim.groupby('Month').agg({'Q_tc': 'sum', 'Q_biv': 'sum'}).reset_index()
-        ax3.bar(m_df['Month'], m_df['Q_tc']/1000, label='TČ', color='#3498db')
+        ax3.bar(m_df['Month'], m_df['Q_tc']/1000, label='TC', color='#3498db')
         ax3.bar(m_df['Month'], m_df['Q_biv']/1000, bottom=m_df['Q_tc']/1000, label='Bivalence', color='#e74c3c')
-        ax3.set_title("3. MĚSÍČNÍ BILANCE ENERGIE [MWh]", fontweight='bold')
+        ax3.set_title("3. MESICNI BILANCE ENERGIE [MWh]", fontweight='bold')
         ax3.set_xticks(range(1,13)); ax3.set_ylabel("MWh"); ax3.legend(); ax3.grid(alpha=0.1, axis='y')
 
         # 4. MONOTÓNA DLE VÝKONU
-        ax4 = plt.subplot(2, 2, 4)
         q_sorted = np.sort(df_sim['Q_need'].values)[::-1]
         p_lim_biv = np.interp(t_biv, df_char[t_col], df_char[v_col]) * pocet_tc
         ax4.plot(range(8760), q_sorted, 'r-', lw=2)
         ax4.fill_between(range(8760), p_lim_biv, q_sorted, where=(q_sorted > p_lim_biv), color='#e74c3c', alpha=0.4, label='Bivalence')
-        ax4.fill_between(range(8760), 0, np.minimum(q_sorted, p_lim_biv), color='#3498db', alpha=0.2, label='Kryto TČ')
-        ax4.set_title("4. TRVÁNÍ POTŘEBY VÝKONU (DLE VÝKONU)", fontweight='bold')
-        ax4.set_xlabel("Hodin v roce"); ax4.set_ylabel("Výkon [kW]"); ax4.legend(); ax4.grid(alpha=0.2)
-        
-        plt.tight_layout()
-        st.pyplot(fig_main)
+        ax4.fill_between(range(8760), 0, np.minimum(q_sorted, p_lim_biv), color='#3498db', alpha=0.2, label='Kryto TC')
+        ax4.set_title("4. TRVANI POTREBY VYKONU", fontweight='bold')
+        ax4.set_xlabel("Hodin v roce"); ax4.set_ylabel("Vykon [kW]"); ax4.legend(); ax4.grid(alpha=0.2)
+        st.pyplot(fig_bot)
 
-        # 5. MONOTÓNA DLE TEPLOTY (přes celou šířku)
+        # 5. MONOTÓNA DLE TEPLOTY
         st.markdown("---")
         fig_mono_t, ax5 = plt.subplots(figsize=(18, 5))
         df_sorted_t = df_sim.sort_values('Temp').reset_index(drop=True)
-        ax5.plot(df_sorted_t.index, df_sorted_t['Q_need'], 'r', label='Potřeba domu (ÚT+TUV)')
-        ax5.plot(df_sorted_t.index, df_sorted_t['Q_tc'], 'b', label='Krytí TČ')
+        ax5.plot(df_sorted_t.index, df_sorted_t['Q_need'], 'r', label='Potreba domu (UT+TUV)')
+        ax5.plot(df_sorted_t.index, df_sorted_t['Q_tc'], 'b', label='Kryti TC')
         biv_idx = df_sorted_t[df_sorted_t['Q_biv'] > 0.1].index
         if len(biv_idx) > 0:
             ax5.fill_between(df_sorted_t.index[:max(biv_idx)], df_sorted_t['Q_tc'][:max(biv_idx)], 
                              df_sorted_t['Q_need'][:max(biv_idx)], color='red', alpha=0.3, label='Oblast bivalence')
-        ax5.set_title("5. ČETNOST TEPLOT A BOD BIVALENCE V ROCE (SEŘAZENO DLE TEPLOTY)", fontweight='bold')
-        ax5.set_ylabel("Výkon [kW]"); ax5.set_xlabel("Hodin v roce (vzestupně dle teploty)"); ax5.legend(); ax5.grid(alpha=0.2)
+        ax5.set_title("5. CETNOST TEPLOT A BOD BIVALENCE V ROCE (SERAZENO DLE TEPLOTY)", fontweight='bold')
+        ax5.set_ylabel("Vykon [kW]"); ax5.set_xlabel("Hodin v roce (vzestupne dle teploty)"); ax5.legend(); ax5.grid(alpha=0.2)
         st.pyplot(fig_mono_t)
 
-        # --- FUNKCE PRO PDF REPORT ---
+        # --- PDF REPORT ---
         def generate_pdf_report():
             pdf = FPDF()
             pdf.add_page()
-            pdf.set_font("Arial", "B", 16)
-            pdf.cell(0, 10, f"Technicko-ekonomicky report: {nazev_projektu}", ln=True, align="C")
+            pdf.set_font("Helvetica", "B", 16)
             
-            # Parametry
-            pdf.set_font("Arial", "", 10)
+            # Sanitace textů pro PDF
+            pdf.cell(0, 10, f"Technicko-ekonomicky report: {remove_accents(nazev_projektu)}", ln=True, align="C")
+            
+            pdf.set_font("Helvetica", "", 10)
             pdf.ln(5)
-            pdf.cell(0, 10, f"Vstupy: TZ {ztrata}kW, Spotreba UT {spotreba_ut}MWh, TUV {spotreba_tuv}MWh, Kaskada {pocet_tc}ks TC", ln=True)
-            pdf.cell(0, 10, f"Teplotni spad: {t_spad_ut}, Vystup TUV: {t_tuv_vystup}C, Bivalence: {t_biv:.1f}C", ln=True)
+            # Přidání klíčových dat bez diakritiky
+            pdf.cell(0, 8, f"Tepelna ztrata: {ztrata} kW | Navrhova teplota: {t_design} C", ln=True)
+            pdf.cell(0, 8, f"Rocni spotreba UT: {spotreba_ut} MWh | TUV: {spotreba_tuv} MWh", ln=True)
+            pdf.cell(0, 8, f"Pocet TC v kaskade: {pocet_tc} | Teplotni spad: {remove_accents(t_spad_ut)}", ln=True)
+            pdf.cell(0, 8, f"Vypocteny bod bivalence: {t_biv:.1f} C", ln=True)
             
-            # Uložení grafů do dočasných souborů pro PDF
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp1:
-                fig_main.savefig(tmp1.name, dpi=100)
-                pdf.image(tmp1.name, x=10, y=50, w=190)
+            pdf.ln(5)
+            # Uložení grafů
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t1:
+                fig_top.savefig(t1.name, dpi=100)
+                pdf.image(t1.name, x=10, y=60, w=190)
             
             pdf.add_page()
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp2:
-                fig_mono_t.savefig(tmp2.name, dpi=100)
-                pdf.image(tmp2.name, x=10, y=20, w=190)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t2:
+                fig_bot.savefig(t2.name, dpi=100)
+                pdf.image(t2.name, x=10, y=20, w=190)
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t3:
+                fig_mono_t.savefig(t3.name, dpi=100)
+                pdf.image(t3.name, x=10, y=140, w=190)
                 
             return pdf.output()
 
-        # Tlačítka pro export
         st.sidebar.markdown("---")
-        pdf_data = generate_pdf_report()
-        st.sidebar.download_button("📥 Stáhnout PDF Report", data=pdf_data, file_name=f"Report_{nazev_projektu}.pdf", mime="application/pdf")
+        if st.sidebar.button("⚙️ Pripravit PDF"):
+            pdf_out = generate_pdf_report()
+            st.sidebar.download_button("📥 Stahnout PDF Report", data=pdf_out, file_name=f"Report_{remove_accents(nazev_projektu)}.pdf", mime="application/pdf")
