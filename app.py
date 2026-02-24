@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import io
-import re
 import unicodedata
 import tempfile
 from fpdf import FPDF
@@ -40,9 +39,9 @@ def load_char(file):
 
 # --- KONFIGURACE STRÁNKY ---
 st.set_page_config(page_title="Expertní simulátor TČ", layout="wide")
-st.title("📊 Energetická analýza kaskády TČ")
+st.title("📊 Profesionální analýza kaskády TČ")
 
-# --- SIDEBAR ---
+# --- SIDEBAR (Vstupy) ---
 with st.sidebar:
     st.header("⚙️ Vstupní parametry")
     nazev_projektu = st.text_input("Název projektu", "SVJ Sladkovičova")
@@ -74,12 +73,12 @@ if tmy_up and char_up:
         tmy['T_smooth'] = tmy['T2m'].rolling(window=6, min_periods=1).mean()
         q_tuv_avg = (f_tuv / 8760) * 1000
         
-        # Kalibrace
+        # Kalibrace k_oprava
         potreba_ut_teorie = [ztrata_celkova * (20 - t) / (20 - t_design) if t < 20 else 0 for t in tmy['T_smooth']]
         k_oprava = fakt_ut / (sum(potreba_ut_teorie) / 1000)
         naklady_czt_rok = (fakt_ut + f_tuv) * (cena_gj_czt * 3.6)
 
-        # Hledání bodu bivalence
+        # Bod bivalence
         t_biv = -99
         for t in np.linspace(15, -15, 500):
             q_need = (ztrata_celkova * (20 - t) / (20 - t_design) * k_oprava) + q_tuv_avg
@@ -88,7 +87,7 @@ if tmy_up and char_up:
                 t_biv = t
                 break
 
-        # Simulace
+        # Hodinová simulace
         res = []
         for t_out, t_smooth in zip(tmy['T2m'], tmy['T_smooth']):
             q_total = max(0, (ztrata_celkova * (20 - t_smooth) / (20 - t_design) * k_oprava)) + q_tuv_avg
@@ -96,74 +95,95 @@ if tmy_up and char_up:
             cop = np.interp(t_out, df_char['Teplota'], df_char['COP'])
             q_tc = min(q_total, p_max)
             q_biv = max(0, q_total - q_tc)
-            res.append([t_out, q_total, q_tc, q_biv, q_tc/cop if q_tc > 0 else 0, q_biv/0.98, p_max])
+            res.append([t_out, q_total, q_tc, q_biv, q_tc/cop if q_tc > 0 else 0, q_biv/0.98])
 
-        df_sim = pd.DataFrame(res, columns=['Temp', 'Q_need_kW', 'Q_tc_kW', 'Q_biv_kW', 'El_tc_kW', 'El_biv_kW', 'P_tc_max'])
-        df_sorted = df_sim.sort_values('Temp').reset_index(drop=True)
+        df_sim = pd.DataFrame(res, columns=['Temp', 'Q_need', 'Q_tc', 'Q_biv', 'El_tc', 'El_biv'])
         
-        el_tc_mwh = df_sim['El_tc_kW'].sum() / 1000
-        el_biv_mwh = df_sim['El_biv_kW'].sum() / 1000
+        el_tc_mwh = df_sim['El_tc'].sum() / 1000
+        el_biv_mwh = df_sim['El_biv'].sum() / 1000
         naklady_tc = (el_tc_mwh + el_biv_mwh) * cena_el_mwh + servis
         uspora = naklady_czt_rok - naklady_tc
 
-        # --- GRAFICKÝ REPORT 2x2 ---
+        # --- FINÁLNÍ GRAFICKÝ REPORT 2x2 ---
         fig = plt.figure(figsize=(16, 12))
         plt.suptitle(f"EXPERTNÍ ANALÝZA: {nazev_projektu}", fontsize=18, fontweight='bold')
 
-        # A. Modulace vs Teplota (Původní)
+        # A. Graf 1: Dynamika provozu (Vracíme k původní správné verzi)
         ax1 = plt.subplot(2, 2, 1)
         t_range = np.linspace(-15, 18, 100)
         q_domu = [(ztrata_celkova * (20 - t) / (20 - t_design) * k_oprava) + q_tuv_avg for t in t_range]
         p_kaskady = [np.interp(t, df_char['Teplota'], df_char['Vykon_kW']) * pocet_tc for t in t_range]
-        ax1.plot(t_range, q_domu, color='red', lw=2, label='Potřeba domu (UT + TUV)')
-        ax1.plot(t_range, p_kaskady, color='blue', lw=1, ls='--', alpha=0.5, label='Max. limit kaskády')
-        ax1.fill_between(t_range, 0, [min(q,p) for q,p in zip(q_domu, p_kaskady)], color='green', alpha=0.2, label='Pracovní oblast TČ')
+        p_provoz_tc = [min(q, p) for q, p in zip(q_domu, p_kaskady)]
+
+        ax1.plot(t_range, q_domu, color='red', lw=1.5, label='Potřeba domu (UT + TUV)')
+        ax1.plot(t_range, p_kaskady, color='blue', lw=1, ls='--', alpha=0.3, label='Max. limit kaskády')
+        ax1.plot(t_range, p_provoz_tc, color='green', lw=5, alpha=0.5, label='Skutečný výkon TČ (modulace)')
+        
+        t_mraz = np.linspace(-15, t_biv, 50)
+        q_mraz = [(ztrata_celkova * (20 - t) / (20 - t_design) * k_oprava) + q_tuv_avg for t in t_mraz]
+        p_mraz = [np.interp(t, df_char['Teplota'], df_char['Vykon_kW']) * pocet_tc for t in t_mraz]
+        ax1.fill_between(t_mraz, p_mraz, q_mraz, color='red', alpha=0.2, hatch='\\\\\\', label='Bivalentní dohřev')
+
         ax1.axvline(t_biv, color='black', ls=':', lw=2, label=f'Bod bivalence {t_biv:.1f}°C')
         ax1.set_title("DYNAMIKA PROVOZU A MODULACE", fontweight='bold')
-        ax1.set_xlabel("Teplota [°C]"); ax1.set_ylabel("Výkon [kW]"); ax1.legend(fontsize=9); ax1.grid(alpha=0.2)
+        ax1.set_xlabel("Venkovní teplota [°C]"); ax1.set_ylabel("Výkon [kW]")
+        ax1.legend(loc='lower right', fontsize=9); ax1.grid(alpha=0.2)
 
-        # B. VÝKONOVÁ ROVNOVÁHA (NÁHRADA ZA HISTOGRAM)
+        # B. Graf 2: Energetické pokrytí (Nová verze dle poslední přílohy)
         ax2 = plt.subplot(2, 2, 2)
-        ax2.plot(df_sorted.index, df_sorted['Q_need_kW'], color='red', label='Potřeba objektu', lw=1.5)
-        ax2.plot(df_sorted.index, df_sorted['P_tc_max'], color='blue', ls='--', alpha=0.4, label='Max. výkon TČ')
-        ax2.fill_between(df_sorted.index, 0, df_sorted['Q_tc_kW'], color='#3498db', alpha=0.3, label='Kryto TČ')
-        ax2.fill_between(df_sorted.index, df_sorted['Q_tc_kW'], df_sorted['Q_need_kW'], color='#e74c3c', alpha=0.3, label='Bivalence')
-        ax2.set_ylabel("Výkon [kW]"); ax2.set_xlabel("Hodinový průběh (seřazeno dle teploty)")
+        # Seskupení dat dle teploty pro hladkou vizualizaci plochy
+        df_area = df_sim.groupby('Temp').mean().sort_index()
+        ax2.fill_between(df_area.index, 0, df_area['Q_tc'], color='#3498db', alpha=0.7, label='Energie dodaná TČ')
+        ax2.fill_between(df_area.index, df_area['Q_tc'], df_area['Q_need'], color='#e74c3c', alpha=0.7, label='Bivalentní energie')
+        ax2.plot(df_area.index, df_area['Q_need'], color='black', lw=0.5, alpha=0.5)
         
-        ax2b = ax2.twinx()
-        ax2b.plot(df_sorted.index, df_sorted['Temp'], color='black', alpha=0.3, lw=1, label='Venkovní teplota')
-        ax2b.set_ylabel("Teplota [°C]")
-        ax2.set_title("VÝKONOVÁ ROVNOVÁHA V ČASE", fontweight='bold')
-        ax2.grid(alpha=0.1)
+        ax2.set_title("ENERGETICKÉ POKRYTÍ DLE VENKOVNÍ TEPLOTY", fontweight='bold')
+        ax2.set_xlabel("Venkovní teplota [°C]"); ax2.set_ylabel("Výkon [kW]")
+        ax2.legend(loc='upper right', fontsize=9); ax2.grid(alpha=0.2)
 
-        # C. Ekonomika
+        # C. Graf 3: Ekonomické srovnání
         ax3 = plt.subplot(2, 2, 3)
         ax3.bar(['Původní CZT', f'Nové TČ ({pocet_tc}ks)'], [naklady_czt_rok, naklady_tc], color=['#95a5a6', '#27ae60'])
         ax3.set_title(f"ROČNÍ NÁKLADY (SPÁD {spad_text})", fontweight='bold')
         for i, v in enumerate([naklady_czt_rok, naklady_tc]): 
-            ax3.text(i, v + 10000, f"{v:,.0f} Kč", ha='center', fontweight='bold')
+            ax3.text(i, v + 10000, f"{v:,.0f} Kč", ha='center', fontweight='bold', fontsize=11)
 
-        # D. Tabulka
+        # D. Graf 4: Tabulka výsledků
         ax4 = plt.subplot(2, 2, 4); ax4.axis('off')
-        summary = [["Projekt", nazev_projektu], ["Teplotní spád", spad_text], ["Bod bivalence", f"{t_biv:.1f} °C"], ["Roční úspora", f"{uspora:,.0f} Kč"], ["Návratnost", f"{investice/uspora:.1f} let"]]
-        tbl = ax4.table(cellText=summary, loc='center', cellLoc='left', colWidths=[0.4, 0.6])
-        tbl.scale(1, 3); tbl.set_fontsize(12)
+        summary = [
+            ["Projekt", nazev_projektu], 
+            ["Teplotní spád", spad_text], 
+            ["Bod bivalence", f"{t_biv:.1f} °C"], 
+            ["Roční úspora", f"{uspora:,.0f} Kč"], 
+            ["Návratnost investice", f"{investice/uspora:.1f} let"]
+        ]
+        tbl = ax4.table(cellText=summary, loc='center', cellLoc='left', colWidths=[0.45, 0.55])
+        tbl.auto_set_font_size(False); tbl.set_fontsize(11); tbl.scale(1, 3.2)
+        for (row, col), cell in tbl.get_celld().items():
+            cell.set_edgecolor('lightgray')
+            if col == 0: cell.set_text_props(fontweight='bold')
 
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         st.pyplot(fig)
 
-        # --- EXPORTY ---
-        st.markdown("---")
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("📄 Exportovat PDF"):
-                pdf = FPDF(); pdf.add_page(); pdf.set_font("Helvetica", 'B', 16)
-                pdf.cell(190, 10, f"ANALYZNI REPORT: {remove_accents(nazev_projektu)}", ln=True, align='C')
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                    fig.savefig(tmp.name, dpi=150); pdf.image(tmp.name, x=10, y=30, w=190)
-                st.download_button("⬇️ Stáhnout PDF", data=pdf.output(dest='S').encode('latin-1', 'replace'), file_name="Report.pdf")
-        
-        with c2:
-            output = io.BytesIO()
-            df_sim.to_excel(output, index=False)
-            st.download_button("⬇️ Stáhnout Excel", data=output.getvalue(), file_name="Analyza.xlsx", mime="application/vnd.ms-excel")
+        # --- EXPORT DO PDF ---
+        if st.button("📄 Exportovat kompletní PDF report"):
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Helvetica", 'B', 16)
+            pdf.cell(190, 10, f"ANALYZNI REPORT: {remove_accents(nazev_projektu)}", ln=True, align='C')
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                fig.savefig(tmp.name, dpi=150)
+                pdf.image(tmp.name, x=10, y=35, w=190)
+            
+            pdf.ln(130)
+            pdf.set_font("Helvetica", '', 10)
+            pdf.cell(190, 7, f"Vypocet proveden pro kaskadu {pocet_tc} TC.", ln=True)
+            
+            st.download_button("⬇️ Stáhnout PDF", data=pdf.output(dest='S').encode('latin-1', 'replace'), file_name="Report.pdf")
+
+        # Excel export (robustní verze)
+        output = io.BytesIO()
+        df_sim.to_excel(output, index=False)
+        st.download_button("⬇️ Stáhnout Excel", data=output.getvalue(), file_name="Data_simulace.xlsx")
