@@ -7,7 +7,7 @@ import unicodedata
 from fpdf import FPDF
 import tempfile
 
-# --- FUNKCE PRO ODSTRANĚNÍ DIAKRITIKY (Pro stabilitu PDF) ---
+# --- FUNKCE PRO ODSTRANĚNÍ DIAKRITIKY ---
 def remove_accents(input_str):
     if not input_str: return ""
     nfkd_form = unicodedata.normalize('NFKD', input_str)
@@ -33,9 +33,9 @@ def load_char(file):
     except: return None
 
 # --- KONFIGURACE STRÁNKY ---
-st.set_page_config(page_title="Expertní simulátor TČ v2.2", layout="wide")
+st.set_page_config(page_title="Expertní simulátor TČ v2.3", layout="wide")
 
-# --- SIDEBAR: KOMPLETNÍ VSTUPY ---
+# --- SIDEBAR: VŠECHNY PARAMETRY ---
 with st.sidebar:
     st.header("⚙️ Konfigurace projektu")
     nazev_projektu = st.text_input("Název projektu", "SVJ Sladkovicova")
@@ -103,25 +103,23 @@ if tmy_file and char_file:
                 t_biv = t
                 break
 
-        # --- GRAFICKÁ ČÁST ---
-        st.header(f"📊 Projekt: {nazev_projektu}")
+        # --- VIZUALIZACE ---
+        st.header(f"📊 Report projektu: {nazev_projektu}")
         
-        # Horní blok grafů (1 a 2)
+        # GRAFY 1 & 2
         fig_top, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
-        
-        # 1. DYNAMIKA S OPRAVENÝM ŠRAFOVÁNÍM
         tr = np.linspace(-15, 18, 100)
         q_p = np.array([(ztrata * (t_vnitrni - t) / (t_vnitrni - t_design) * k_oprava) + q_tuv_avg for t in tr])
         p_p = np.array([np.interp(t, df_char[t_col], df_char[v_col]) * pocet_tc for t in tr])
+        
         ax1.plot(tr, q_p, 'r-', lw=2, label='Potreba (UT+TUV)')
         ax1.plot(tr, p_p, 'b--', alpha=0.4, label='Max kaskada')
         ax1.plot(tr, np.minimum(q_p, p_p), 'g-', lw=5, alpha=0.4, label='Kryti TC')
-        ax1.fill_between(tr, p_p, q_p, where=(q_p > p_p), color='red', alpha=0.2, hatch='///', label='Bivalence')
+        ax1.fill_between(tr, p_p, q_p, where=(q_p > p_p), color='red', alpha=0.2, hatch='XXXX', label='Bivalence')
         ax1.axvline(t_biv, color='k', ls=':', label=f'Bivalence {t_biv:.1f}C')
         ax1.set_title("1. DYNAMIKA PROVOZU A MODULACE", fontweight='bold')
         ax1.set_xlabel("Venkovni teplota [C]"); ax1.set_ylabel("Vykon [kW]"); ax1.legend(); ax1.grid(alpha=0.2)
 
-        # 2. ENERGETICKÝ MIX DLE TEPLOTY
         df_sim['Temp_R'] = df_sim['Temp'].round()
         df_t = df_sim.groupby('Temp_R')[['Q_tc', 'Q_biv']].sum().sort_index()
         ax2.bar(df_t.index, df_t['Q_tc'], color='#3498db', label='Energie TC')
@@ -130,10 +128,8 @@ if tmy_file and char_file:
         ax2.set_xlabel("Teplota [C]"); ax2.set_ylabel("Energie [kWh]"); ax2.legend(); ax2.grid(alpha=0.1, axis='y')
         st.pyplot(fig_top)
 
-        # Dolní blok grafů (3 a 4)
+        # GRAFY 3 & 4
         fig_bot, (ax3, ax4) = plt.subplots(1, 2, figsize=(18, 7))
-        
-        # 3. MĚSÍČNÍ BILANCE
         df_sim['Month'] = (df_sim.index // (24 * 30.5)).astype(int) + 1
         m_df = df_sim.groupby('Month').agg({'Q_tc': 'sum', 'Q_biv': 'sum'}).reset_index()
         ax3.bar(m_df['Month'], m_df['Q_tc']/1000, label='TC', color='#3498db')
@@ -141,7 +137,6 @@ if tmy_file and char_file:
         ax3.set_title("3. MESICNI BILANCE ENERGIE [MWh]", fontweight='bold')
         ax3.set_xticks(range(1,13)); ax3.set_ylabel("MWh"); ax3.legend(); ax3.grid(alpha=0.1, axis='y')
 
-        # 4. MONOTÓNA DLE VÝKONU
         q_sorted = np.sort(df_sim['Q_need'].values)[::-1]
         p_lim_biv = np.interp(t_biv, df_char[t_col], df_char[v_col]) * pocet_tc
         ax4.plot(range(8760), q_sorted, 'r-', lw=2)
@@ -151,7 +146,7 @@ if tmy_file and char_file:
         ax4.set_xlabel("Hodin v roce"); ax4.set_ylabel("Vykon [kW]"); ax4.legend(); ax4.grid(alpha=0.2)
         st.pyplot(fig_bot)
 
-        # 5. MONOTÓNA DLE TEPLOTY
+        # GRAF 5
         st.markdown("---")
         fig_mono_t, ax5 = plt.subplots(figsize=(18, 5))
         df_sorted_t = df_sim.sort_values('Temp').reset_index(drop=True)
@@ -161,29 +156,25 @@ if tmy_file and char_file:
         if len(biv_idx) > 0:
             ax5.fill_between(df_sorted_t.index[:max(biv_idx)], df_sorted_t['Q_tc'][:max(biv_idx)], 
                              df_sorted_t['Q_need'][:max(biv_idx)], color='red', alpha=0.3, label='Oblast bivalence')
-        ax5.set_title("5. CETNOST TEPLOT A BOD BIVALENCE V ROCE (SERAZENO DLE TEPLOTY)", fontweight='bold')
+        ax5.set_title("5. CETNOST TEPLOT A BOD BIVALENCE V ROCE", fontweight='bold')
         ax5.set_ylabel("Vykon [kW]"); ax5.set_xlabel("Hodin v roce (vzestupne dle teploty)"); ax5.legend(); ax5.grid(alpha=0.2)
         st.pyplot(fig_mono_t)
 
-        # --- PDF REPORT ---
-        def generate_pdf_report():
+        # --- PDF GENERÁTOR ---
+        def generate_pdf_bytes():
             pdf = FPDF()
             pdf.add_page()
             pdf.set_font("Helvetica", "B", 16)
-            
-            # Sanitace textů pro PDF
             pdf.cell(0, 10, f"Technicko-ekonomicky report: {remove_accents(nazev_projektu)}", ln=True, align="C")
             
             pdf.set_font("Helvetica", "", 10)
             pdf.ln(5)
-            # Přidání klíčových dat bez diakritiky
             pdf.cell(0, 8, f"Tepelna ztrata: {ztrata} kW | Navrhova teplota: {t_design} C", ln=True)
             pdf.cell(0, 8, f"Rocni spotreba UT: {spotreba_ut} MWh | TUV: {spotreba_tuv} MWh", ln=True)
             pdf.cell(0, 8, f"Pocet TC v kaskade: {pocet_tc} | Teplotni spad: {remove_accents(t_spad_ut)}", ln=True)
             pdf.cell(0, 8, f"Vypocteny bod bivalence: {t_biv:.1f} C", ln=True)
             
             pdf.ln(5)
-            # Uložení grafů
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t1:
                 fig_top.savefig(t1.name, dpi=100)
                 pdf.image(t1.name, x=10, y=60, w=190)
@@ -197,9 +188,18 @@ if tmy_file and char_file:
                 fig_mono_t.savefig(t3.name, dpi=100)
                 pdf.image(t3.name, x=10, y=140, w=190)
                 
-            return pdf.output()
+            # KLÍČOVÁ OPRAVA: Výstup musí být bytes
+            return bytes(pdf.output())
 
+        # --- SIDEBAR DOWNLOAD ---
         st.sidebar.markdown("---")
-        if st.sidebar.button("⚙️ Pripravit PDF"):
-            pdf_out = generate_pdf_report()
-            st.sidebar.download_button("📥 Stahnout PDF Report", data=pdf_out, file_name=f"Report_{remove_accents(nazev_projektu)}.pdf", mime="application/pdf")
+        try:
+            pdf_data = generate_pdf_bytes()
+            st.sidebar.download_button(
+                label="📥 Stahnout PDF Report",
+                data=pdf_data,
+                file_name=f"Report_{remove_accents(nazev_projektu)}.pdf",
+                mime="application/pdf"
+            )
+        except Exception as e:
+            st.sidebar.error(f"Chyba pri generovani PDF: {e}")
