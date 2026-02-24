@@ -36,7 +36,7 @@ def load_char(file):
 st.set_page_config(page_title="Energetický Simulátor TČ", layout="wide")
 st.title("🚀 Profesionální simulátor kaskády TČ")
 
-# --- 3. SIDEBAR (Zpřehledněné parametry) ---
+# --- 3. SIDEBAR (Parametry dle vašich obrázků) ---
 st.sidebar.header("⚙️ Systémové parametry")
 with st.sidebar:
     nazev_projektu = st.text_input("Název projektu", "SVJ Sladkovicova")
@@ -44,98 +44,112 @@ with st.sidebar:
     t_design = st.number_input("Návrhová venkovní teplota [°C]", value=-12.0)
     
     st.markdown("### 🌡️ Otopná soustava")
-    t_privod = st.number_input("Návrhová teplota přívodu (při T_design) [°C]", value=60.0)
-    t_zpatecka = st.number_input("Návrhová teplota zpátečky (při T_design) [°C]", value=50.0)
-    t_min_voda = st.number_input("Minimální teplota vody (při +15°C venku) [°C]", value=35.0)
+    t_privod = st.number_input("Návrhová teplota přívodu (TV_Max_Navrh) [°C]", value=60.0)
+    t_zpatecka = st.number_input("Návrhová teplota zpátečky [°C]", value=50.0)
+    t_min_voda = st.number_input("Teplota vody při +15°C (TV_Min_Navrh) [°C]", value=35.0)
+    limit_voda_tc = st.number_input("Max. teplota z TČ (Limit_Voda_TC) [°C]", value=55.0)
     
     st.markdown("### 🚿 Příprava TUV")
-    t_tuv_cilova = st.number_input("Požadovaná teplota TUV [°C]", value=55.0)
-    spotreba_tuv = st.number_input("Roční potřeba tepla pro TUV [MWh/rok]", value=76.0)
+    t_tuv_cilova = st.number_input("Cílová teplota TUV [°C]", value=55.0)
+    spotreba_tuv = st.number_input("Roční potřeba pro TUV [MWh/rok]", value=76.0)
     
-    st.markdown("### 🏭 Provozní parametry")
-    spotreba_ut = st.number_input("Roční potřeba tepla pro ÚT [MWh/rok]", value=124.0)
+    st.markdown("### 🏭 Ekonomika a Provoz")
+    spotreba_ut = st.number_input("Roční potřeba pro ÚT [MWh/rok]", value=124.0)
     pocet_tc = st.slider("Počet TČ v kaskádě", 1, 10, 4)
     cena_el = st.number_input("Cena elektřiny [Kč/MWh]", value=4800.0)
-    cena_gj_czt = st.number_input("Cena původního tepla (CZT) [Kč/GJ]", value=1284.0)
-    investice = st.number_input("Celková investice do TČ [Kč]", value=3800000.0)
+    cena_gj_czt = st.number_input("Cena CZT [Kč/GJ]", value=1284.0)
+    investice = st.number_input("Investice [Kč]", value=3800000.0)
 
-# --- 4. VÝPOČTOVÉ JÁDRO ---
-if st.sidebar.button("▶️ Spustit simulaci") or 'df_sim' in st.session_state:
-    # (Logika načítání dat zůstává stejná jako v předchozím kroku)
-    # Pro účely ukázky předpokládáme nahraná data...
-    pass # [Zde by následoval zbytek kódu s nahráváním souborů]
+# --- 4. NAHRÁNÍ SOUBORŮ ---
+st.subheader("📁 1. Krok: Nahrání datových podkladů")
+col_f1, col_f2 = st.columns(2)
+with col_f1:
+    tmy_file = st.file_uploader("1. Nahrajte TMY (meteorologická data)", type="csv")
+with col_f2:
+    char_file = st.file_uploader("2. Nahrajte Charakteristiku TČ (vstupy_TC.csv)", type="csv")
 
-# --- 5. GRAF ROČNÍCH NÁKLADŮ (S POPISKY DLE VAŠEHO PŘÁNÍ) ---
-def create_econ_plot(naklady_czt, naklady_tc, t_voda_max, t_voda_min, pocet_tc):
-    fig, ax = plt.subplots(figsize=(10, 6))
-    labels = ['Puvodni CZT', f'Nove TC ({pocet_tc}ks)']
-    costs = [naklady_czt, naklady_tc]
-    
-    bars = ax.bar(labels, costs, color=['#95a5a6', '#2ecc71'], width=0.6, edgecolor='white', linewidth=1)
-    
-    # Nastavení os a titulků
-    ax.set_ylabel("Naklady [Kc/rok]", fontsize=10)
-    ax.set_title(f"ROCNI NAKLADY (SPAD {int(t_voda_max)} / {int(t_voda_min)} deg C)", 
-                 fontweight='bold', pad=20)
-    
-    # Formátování Y osy (tisíce)
-    ax.get_yaxis().set_major_formatter(plt.FuncFormatter(lambda x, p: format(int(x), ',').replace(',', ' ')))
-    
-    # Přidání hodnot NAD sloupce
-    for bar in bars:
-        height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height + (max(costs)*0.02),
-                f'{int(height):,} Kc'.replace(',', ' '), 
-                ha='center', va='bottom', fontweight='bold', fontsize=12)
-    
-    plt.tight_layout()
-    return fig
+# --- 5. VÝPOČET A ZOBRAZENÍ ---
+if tmy_file and char_file:
+    tmy_raw = load_tmy_robust(tmy_file)
+    df_char = load_char(char_file)
 
-# --- 6. EXPORT PDF (SUMÁŘ ZADÁNÍ I VÝSTUPŮ) ---
-def generate_pdf_final(params, results, figs):
-    pdf = FPDF()
-    pdf.add_page()
-    
-    # Titulek
-    pdf.set_font("Helvetica", 'B', 18)
-    pdf.cell(190, 15, f"REPORT: {remove_accents(params['nazev'])}", ln=True, align='C')
-    pdf.line(10, 25, 200, 25)
-    
-    # Levý sloupec: Zadání
-    pdf.ln(5)
-    pdf.set_font("Helvetica", 'B', 12)
-    pdf.cell(95, 10, "1. VSTUPNI PARAMETRY", ln=False)
-    pdf.cell(95, 10, "2. EKONOMICKY VYSLEDEK", ln=True)
-    
-    pdf.set_font("Helvetica", '', 10)
-    # Data zadání
-    y_start = pdf.get_y()
-    pdf.cell(95, 6, f"Tepelna ztrata: {params['ztrata']} kW", ln=True)
-    pdf.cell(95, 6, f"Navrhovy spad: {params['t_privod']}/{params['t_zpatecka']} C", ln=True)
-    pdf.cell(95, 6, f"Cilova teplota TUV: {params['t_tuv']} C", ln=True)
-    pdf.cell(95, 6, f"Pocet jednotek v kaskade: {params['pocet_tc']} ks", ln=True)
-    
-    # Pravý sloupec: Výsledky (pomocí set_xy)
-    pdf.set_xy(105, y_start)
-    pdf.cell(95, 6, f"Rocni uspora: {int(results['uspora']):,} Kc".replace(',', ' '), ln=True)
-    pdf.set_xy(105, pdf.get_y())
-    pdf.cell(95, 6, f"Navratnost: {results['navratnost']:.1f} let", ln=True)
-    pdf.set_xy(105, pdf.get_y())
-    pdf.cell(95, 6, f"SCOP systemu: {results['scop']:.2f}", ln=True)
-    
-    # Grafy
-    pdf.ln(10)
-    pdf.set_font("Helvetica", 'B', 12)
-    pdf.cell(190, 10, "3. GRAFICKE PREHLEDY", ln=True)
-    
-    # Vložení grafů (2 vedle sebe, 1 velký pod ně)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t1:
-        figs['f1'].savefig(t1.name, dpi=150); pdf.image(t1.name, x=10, y=pdf.get_y(), w=90)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t2:
-        figs['f2'].savefig(t2.name, dpi=150); pdf.image(t2.name, x=105, y=pdf.get_y(), w=90)
-    
-    pdf.set_y(pdf.get_y() + 65)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t3:
-        figs['f_econ'].savefig(t3.name, dpi=150); pdf.image(t3.name, x=45, y=pdf.get_y(), w=120)
+    if tmy_raw is not None and df_char is not None:
+        tmy = tmy_raw.copy()
+        tmy['T2m'] = pd.to_numeric(tmy['T2m'], errors='coerce').fillna(0)
         
-    return pdf.output()
+        # Výpočet potřeb a simulace
+        q_tuv_avg = (spotreba_tuv / 8760) * 1000
+        res = []
+        for t_out in tmy['T2m']:
+            # Ekvitermní křivka
+            t_voda_req = np.interp(t_out, [t_design, 15], [t_privod, t_min_voda]) if t_out < 20 else t_min_voda
+            
+            # Korekce výkonu TČ podle teploty vody
+            k_p = 1 - (max(0, t_voda_req - 35.0) * 0.01)
+            k_cop = 1 - (max(0, t_voda_req - 35.0) * 0.025)
+            
+            q_need = max(0, (ztrata * (20 - t_out) / (20 - t_design))) + q_tuv_avg
+            p_max = np.interp(t_out, df_char['Teplota'], df_char['Vykon_kW']) * pocet_tc * k_p
+            
+            # Omezení teplotou vody (pokud TČ neumí vyrobit víc než limit_voda_tc)
+            if t_voda_req > limit_voda_tc:
+                q_tc = 0 # TČ vypíná, vše bere bivalence (zjednodušený model)
+            else:
+                q_tc = min(q_need, p_max)
+            
+            q_biv = max(0, q_need - q_tc)
+            cop = np.interp(t_out, df_char['Teplota'], df_char['COP']) * k_cop
+            
+            res.append([q_tc, q_biv, q_tc/cop if q_tc > 0 else 0, q_biv/0.98])
+
+        df_sim = pd.DataFrame(res, columns=['Q_tc', 'Q_biv', 'El_tc', 'El_biv'])
+        
+        # Ekonomika
+        q_tc_s, q_biv_s = df_sim['Q_tc'].sum()/1000, df_sim['Q_biv'].sum()/1000
+        el_tc_s, el_biv_s = df_sim['El_tc'].sum()/1000, df_sim['El_biv'].sum()/1000
+        
+        naklady_czt = (spotreba_ut + spotreba_tuv) * (cena_gj_czt * 3.6)
+        naklady_tc = (el_tc_s + el_biv_s) * cena_el + 15000 # + paušál servis
+        uspora = naklady_czt - naklady_tc
+        navratnost = investice / uspora if uspora > 0 else 0
+
+        # --- GRAFY ---
+        # Graf Roční náklady
+        fig_econ, ax_econ = plt.subplots(figsize=(10, 6))
+        bars = ax_econ.bar(['Puvodni CZT', f'Nove TC ({pocet_tc}ks)'], [naklady_czt, naklady_tc], color=['#95a5a6', '#2ecc71'])
+        ax_econ.set_title(f"ROCNI NAKLADY (SPAD {int(t_privod)}/{int(t_zpatecka)} deg C)", fontweight='bold')
+        for bar in bars:
+            h = bar.get_height()
+            ax_econ.text(bar.get_x()+bar.get_width()/2, h + 10000, f'{int(h):,} Kc'.replace(',',' '), ha='center', fontweight='bold')
+        
+        # Zobrazení výsledků
+        st.markdown("---")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Roční úspora", f"{int(uspora):,} Kč".replace(',',' '))
+        m2.metric("Návratnost", f"{navratnost:.1f} let")
+        m3.metric("SCOP systému", f"{q_tc_s/el_tc_s:.2f}")
+        
+        st.pyplot(fig_econ)
+
+        # --- PDF GENERÁTOR ---
+        def create_pdf():
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Helvetica", 'B', 16)
+            pdf.cell(190, 10, f"ANALYZA: {remove_accents(nazev_projektu)}", ln=True, align='C')
+            pdf.set_font("Helvetica", '', 10)
+            pdf.ln(5)
+            pdf.cell(190, 7, f"Zadani: Ztrata {ztrata}kW, Spad {t_privod}/{t_zpatecka}C, TUV {t_tuv_cilova}C", ln=True)
+            pdf.cell(190, 7, f"Vysledek: Uspora {int(uspora):,} Kc/rok, Navratnost {navratnost:.1f} let".replace(',',' '), ln=True)
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                fig_econ.savefig(tmp.name, dpi=120)
+                pdf.image(tmp.name, x=30, y=pdf.get_y()+10, w=140)
+            return pdf.output()
+
+        if st.sidebar.button("📄 Generovat PDF"):
+            pdf_bytes = create_pdf()
+            st.sidebar.download_button("⬇️ Stáhnout Report", data=bytes(pdf_bytes), file_name="Report.pdf")
+
+else:
+    st.warning("⚠️ Prosím nahrajte oba soubory v kroku 1 pro spuštění výpočtu.")
