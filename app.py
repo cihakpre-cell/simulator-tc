@@ -71,17 +71,25 @@ if tmy_up and char_up:
 
         df_sim = pd.DataFrame(res, columns=['Temp', 'Q_need', 'Q_tc', 'Q_biv', 'El_tc', 'El_biv'])
         
-        # Bod bivalence pro graf
+        # Výpočty pro bilanci
+        q_tc_sum = df_sim['Q_tc'].sum() / 1000
+        q_biv_sum = df_sim['Q_biv'].sum() / 1000
+        q_total_sum = q_tc_sum + q_biv_sum
+        
+        el_tc_sum = df_sim['El_tc'].sum() / 1000
+        el_biv_sum = df_sim['El_biv'].sum() / 1000
+        el_total_sum = el_tc_sum + el_biv_sum
+
         t_biv = -12.0
         for t in np.linspace(15, -15, 500):
             if (np.interp(t, char['Teplota'], char['Vykon_kW']) * pocet_tc) < ((ztrata_celkova * (20 - t) / (20 - t_design) * k_oprava) + q_tuv_avg):
                 t_biv = t
                 break
 
-        # --- GRAFIKA ---
+        # --- VIZUALIZACE ---
         fig = plt.figure(figsize=(16, 12))
         
-        # 1. DYNAMIKA PROVOZU (OPRAVENO A ZAFIXOVÁNO)
+        # 1. GRAF: DYNAMIKA (FIXNÍ)
         ax1 = plt.subplot(2, 2, 1)
         tr = np.linspace(-15, 18, 100)
         q_p = [(ztrata_celkova * (20 - t) / (20 - t_design) * k_oprava) + q_tuv_avg for t in tr]
@@ -89,7 +97,6 @@ if tmy_up and char_up:
         ax1.plot(tr, q_p, color='red', lw=1.5, label='Potřeba domu')
         ax1.plot(tr, p_p, color='blue', lw=1, ls='--', alpha=0.3, label='Max limit kaskády')
         ax1.plot(tr, [min(q,p) for q,p in zip(q_p, p_p)], color='green', lw=5, alpha=0.5, label='Skutečný výkon TČ')
-        # Návrat šrafování
         t_mraz = np.linspace(-15, t_biv, 50)
         q_mraz = [(ztrata_celkova * (20 - t) / (20 - t_design) * k_oprava) + q_tuv_avg for t in t_mraz]
         p_mraz = [np.interp(t, char['Teplota'], char['Vykon_kW']) * pocet_tc for t in t_mraz]
@@ -98,7 +105,7 @@ if tmy_up and char_up:
         ax1.set_title("DYNAMIKA PROVOZU A MODULACE", fontweight='bold')
         ax1.legend(loc='lower right', fontsize=8); ax1.grid(alpha=0.2)
 
-        # 2. ENERGETICKÝ MIX (ZAFIXOVÁNO)
+        # 2. GRAF: ENERGETICKÝ MIX (FIXNÍ)
         ax2 = plt.subplot(2, 2, 2)
         df_t = df_sim.groupby('Temp')[['Q_tc', 'Q_biv']].sum().sort_index()
         ax2.bar(df_t.index, df_t['Q_tc'], color='#3498db', label='Energie TČ')
@@ -106,40 +113,29 @@ if tmy_up and char_up:
         ax2.set_title("ROZDĚLENÍ ENERGIE DLE VENKOVNÍ TEPLOTY", fontweight='bold')
         ax2.legend(fontsize=8); ax2.grid(alpha=0.1, axis='y')
 
-        # 3. PODÍL BIVALENCE + TABULKA (NOVÉ DLE PŘÍLOHY)
+        # 3. GRAF: VÝSEČOVÝ GRAF (Dle přílohy)
         ax3 = plt.subplot(2, 2, 3)
-        q_tc_sum = df_sim['Q_tc'].sum() / 1000
-        q_biv_sum = df_sim['Q_biv'].sum() / 1000
-        el_tc_sum = df_sim['El_tc'].sum() / 1000
-        el_biv_sum = df_sim['El_biv'].sum() / 1000
-        
-        # Donut graf
-        ax3.pie([q_tc_sum, q_biv_sum], radius=1, colors=['#3498db', '#e74c3c'], 
-                wedgeprops=dict(width=0.3, edgecolor='w'), startangle=90)
-        ax3.set_title("ROČNÍ BILANCE BIVALENCE", fontweight='bold')
-        
-        # Specifická tabulka vedle grafu
-        text_data = [
-            ["Zdroj", "Na dodaném teple", "Na spotřebě el."],
-            ["Tepelná čerpadla", f"{(q_tc_sum/(q_tc_sum+q_biv_sum))*100:.1f} %", f"{(el_tc_sum/(el_tc_sum+el_biv_sum))*100:.1f} %"],
-            ["Bivalentní zdroj", f"{(q_biv_sum/(q_tc_sum+q_biv_sum))*100:.1f} %", f"{(el_biv_sum/(el_tc_sum+el_biv_sum))*100:.1f} %"]
-        ]
-        table_biv = ax3.table(cellText=text_data, loc='bottom', cellLoc='center', bbox=[0.1, -0.4, 0.8, 0.3])
-        table_biv.set_fontsize(9)
+        ax3.pie([q_tc_sum, q_biv_sum], labels=['TČ', 'Biv.'], autopct='%1.1f%%', 
+                startangle=90, colors=['#3498db', '#e74c3c'], explode=(0, 0.1), shadow=True)
+        ax3.set_title("PODÍL NA DODANÉM TEPLE (MWh)", fontweight='bold')
 
-        # 4. TABULKA VÝSLEDKŮ (ZAFIXOVÁNO)
+        # 4. TABULKA: ENERGETICKÁ BILANCE (Dle přílohy, nahrazuje původní tabulku)
         ax4 = plt.subplot(2, 2, 4); ax4.axis('off')
-        naklady_tc = (el_tc_sum + el_biv_sum) * cena_el_mwh + servis
-        naklady_czt = (fakt_ut + f_tuv) * 1284 * 3.6 # Příklad CZT
-        summary = [
-            ["Bod bivalence", f"{t_biv:.1f} °C"],
-            ["Potřeba tepla celkem", f"{q_tc_sum+q_biv_sum:.1f} MWh"],
-            ["Spotřeba elektřiny", f"{el_tc_sum+el_biv_sum:.1f} MWh"],
-            ["Roční úspora", f"{max(0, naklady_czt-naklady_tc):,.0f} Kč"],
-            ["Provozní SCOP", f"{(q_tc_sum+q_biv_sum)/(el_tc_sum+el_biv_sum):.2f}"]
+        table_data = [
+            ["Zdroj", "Dodané teplo [MWh]", "Podíl na teple", "Spotřeba el. [MWh]", "Podíl na el."],
+            ["Tepelná čerpadla", f"{q_tc_sum:.1f}", f"{(q_tc_sum/q_total_sum)*100:.1f} %", f"{el_tc_sum:.1f}", f"{(el_tc_sum/el_total_sum)*100:.1f} %"],
+            ["Bivalentní zdroj", f"{q_biv_sum:.1f}", f"{(q_biv_sum/q_total_sum)*100:.1f} %", f"{el_biv_sum:.1f}", f"{(el_biv_sum/el_total_sum)*100:.1f} %"],
+            ["CELKEM", f"{q_total_sum:.1f}", "100 %", f"{el_total_sum:.1f}", "100 %"]
         ]
-        tbl = ax4.table(cellText=summary, loc='center', cellLoc='left', colWidths=[0.5, 0.5])
-        tbl.scale(1, 3.2); tbl.set_fontsize(11)
+        
+        tbl = ax4.table(cellText=table_data, loc='center', cellLoc='center', bbox=[0, 0.2, 1, 0.6])
+        tbl.auto_set_font_size(False)
+        tbl.set_fontsize(10)
+        # Zvýraznění hlavičky a celkového součtu
+        for i in range(5):
+            tbl[(0, i)].set_facecolor("#f2f2f2")
+            tbl[(0, i)].set_text_props(weight='bold')
+            tbl[(3, i)].set_text_props(weight='bold')
 
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         st.pyplot(fig)
