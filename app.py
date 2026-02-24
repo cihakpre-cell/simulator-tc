@@ -76,7 +76,7 @@ if tmy_up and char_up:
         # --- GRAFICKÝ VÝSTUP ---
         fig = plt.figure(figsize=(18, 14))
         
-        # 1. DYNAMIKA PROVOZU (FIXNÍ)
+        # 1. DYNAMIKA PROVOZU (ZAFIXOVÁNO)
         ax1 = plt.subplot(2, 2, 1)
         tr = np.linspace(-15, 18, 100)
         q_p = [(ztrata_celkova * (20 - t) / (20 - t_design) * k_oprava) + q_tuv_avg for t in tr]
@@ -92,7 +92,7 @@ if tmy_up and char_up:
         ax1.set_title("DYNAMIKA PROVOZU A MODULACE", fontweight='bold')
         ax1.legend(loc='lower right', fontsize=8); ax1.grid(alpha=0.2)
 
-        # 2. ENERGETICKÝ MIX (FIXNÍ)
+        # 2. ENERGETICKÝ MIX (ZAFIXOVÁNO)
         ax2 = plt.subplot(2, 2, 2)
         df_sim['Temp_R'] = df_sim['Temp'].round()
         df_t = df_sim.groupby('Temp_R')[['Q_tc', 'Q_biv']].sum().sort_index()
@@ -101,13 +101,13 @@ if tmy_up and char_up:
         ax2.set_title("ROZDĚLENÍ ENERGIE DLE VENKOVNÍ TEPLOTY", fontweight='bold')
         ax2.legend(fontsize=8); ax2.grid(alpha=0.1, axis='y')
 
-        # 3. VÝSEČOVÝ GRAF + BILANCE (ZAFIXOVÁNO)
+        # 3. VÝSEČOVÝ GRAF (ZAFIXOVÁNO - bez stínu)
         ax3 = plt.subplot(2, 2, 3)
         q_tc_s, q_bv_s = df_sim['Q_tc'].sum()/1000, df_sim['Q_biv'].sum()/1000
         el_tc_s, el_bv_s = df_sim['El_tc'].sum()/1000, df_sim['El_biv'].sum()/1000
         total_q, total_el = q_tc_s + q_bv_s, el_tc_s + el_bv_s
         ax3.pie([q_tc_s, q_bv_s], labels=['TČ', 'Biv.'], autopct='%1.1f%%', startangle=90, 
-                colors=['#3498db', '#e74c3c'], explode=(0, 0.1), shadow=True)
+                colors=['#3498db', '#e74c3c'], explode=(0, 0.1), shadow=False)
         ax3.set_title("PODÍL NA DODANÉM TEPLE", fontweight='bold')
         
         table_data = [
@@ -120,20 +120,25 @@ if tmy_up and char_up:
         tbl.auto_set_font_size(False); tbl.set_fontsize(9)
         for i in range(5): tbl[(0, i)].set_facecolor("#f2f2f2")
 
-        # 4. ČETNOST TEPLOT V ROCE (FIXNÍ - OSA X = HODINY)
+        # 4. TRVÁNÍ POTŘEBY VÝKONU (ZAFIXOVÁNO - osa Y = Výkon kW)
         ax4 = plt.subplot(2, 2, 4)
-        temps_sorted = np.sort(df_sim['Temp'].values) # Seřazení teplot od nejnižší po nejvyšší
-        hours = np.arange(len(temps_sorted))
+        q_sorted = np.sort(df_sim['Q_need'].values)[::-1] # Seřazení od nejvyššího výkonu po nejnižší
+        hours = np.arange(len(q_sorted))
         
-        # Vybarvení oblastí
-        ax4.fill_between(hours, temps_sorted, t_biv, where=(temps_sorted < t_biv), color='#e74c3c', alpha=0.3, label='Bivalentní provoz')
-        ax4.fill_between(hours, temps_sorted, t_biv, where=(temps_sorted >= t_biv), color='#3498db', alpha=0.3, label='Monovalentní provoz')
-        ax4.plot(hours, temps_sorted, color='black', lw=1.5)
+        # Hranice výkonu TČ při t_biv pro vizuální oddělení
+        p_limit_biv = np.interp(t_biv, char['Teplota'], char['Vykon_kW']) * pocet_tc
         
-        ax4.axhline(t_biv, color='black', ls='--', lw=2, label=f'Bod bivalence {t_biv:.1f}°C')
-        ax4.set_title("ČETNOST TEPLOT V ROCE", fontweight='bold')
-        ax4.set_xlabel("Hodin v roce"); ax4.set_ylabel("Venkovní teplota [°C]")
-        ax4.set_xlim(0, 8760); ax4.grid(alpha=0.2); ax4.legend(loc='upper left', fontsize=8)
+        ax4.plot(hours, q_sorted, color='red', lw=2, label='Potřebný výkon domu')
+        ax4.fill_between(hours, p_limit_biv, q_sorted, where=(q_sorted > p_limit_biv), 
+                         color='#e74c3c', alpha=0.4, label='Oblast bivalence')
+        ax4.fill_between(hours, 0, np.minimum(q_sorted, p_limit_biv), 
+                         color='#3498db', alpha=0.3, label='Oblast krytá TČ')
+        
+        ax4.axhline(p_limit_biv, color='blue', ls=':', lw=2, label=f'Max výkon TČ při {t_biv:.1f}°C')
+        ax4.set_title("TRVÁNÍ POTŘEBY VÝKONU (MONOTONA)", fontweight='bold')
+        ax4.set_xlabel("Hodin v roce"); ax4.set_ylabel("Výkon [kW]")
+        ax4.set_xlim(0, 8760); ax4.set_ylim(0, max(q_sorted)*1.1)
+        ax4.grid(alpha=0.2); ax4.legend(loc='upper right', fontsize=8)
 
         plt.tight_layout(rect=[0, 0.05, 1, 0.95])
         st.pyplot(fig)
