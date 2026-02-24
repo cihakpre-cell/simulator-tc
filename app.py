@@ -7,7 +7,7 @@ import unicodedata
 import tempfile
 from fpdf import FPDF
 
-# --- POMOCNÉ FUNKCE (Zůstávají pro stabilitu) ---
+# --- POMOCNÉ FUNKCE ---
 def remove_accents(input_str):
     if not input_str: return ""
     nfkd_form = unicodedata.normalize('NFKD', str(input_str))
@@ -24,9 +24,8 @@ def load_tmy_robust(file):
         if header_idx == -1: return None
         df = pd.read_csv(io.StringIO("\n".join(content[header_idx:])))
         df.columns = df.columns.str.strip()
-        # Odstranění legendy na konci PVGIS souboru (hledáme jen řádky s datem)
+        # Odstranění textové patičky PVGIS
         df = df[df[df.columns[0]].apply(lambda x: str(x)[:4].isdigit() if pd.notnull(x) else False)].copy()
-        # Extrakce měsíce z formátu 20180101:0000
         df['month'] = df[df.columns[0]].str[4:6].astype(int)
         return df
     except: return None
@@ -44,15 +43,14 @@ def load_char(file):
 st.set_page_config(page_title="Energetický Simulátor TČ", layout="wide")
 st.title("🚀 Profesionální simulátor kaskády TČ")
 
-# --- SIDEBAR (Původní odsouhlasené parametry) ---
 with st.sidebar:
     st.header("⚙️ Systémové parametry")
     nazev_projektu = st.text_input("Název projektu", "SVJ Sladkovičova")
     ztrata = st.number_input("Tepelná ztráta [kW]", value=54.0)
     t_design = st.number_input("Návrhová venkovní teplota [°C]", value=-12.0)
     st.markdown("---")
-    t_voda_max = st.number_input("TV_Max_Navrh (při -12°C) [°C]", value=60.0)
-    t_voda_min = st.number_input("TV_Min_Navrh (při +15°C) [°C]", value=35.0)
+    t_voda_max = st.number_input("TV_Max_Navrh [°C]", value=60.0)
+    t_voda_min = st.number_input("TV_Min_Navrh [°C]", value=35.0)
     limit_voda_tc = st.number_input("Limit_Voda_TC (Max z TČ) [°C]", value=55.0)
     st.markdown("---")
     t_tuv_cil = st.number_input("Cílová teplota TUV [°C]", value=55.0)
@@ -64,7 +62,6 @@ with st.sidebar:
     cena_gj_czt = st.number_input("Cena CZT [Kč/GJ]", value=1284.0)
     investice = st.number_input("Investice celkem [Kč]", value=3800000.0)
 
-# --- NAHRÁNÍ DAT ---
 st.subheader("📁 1. Krok: Nahrání dat")
 col_f1, col_f2 = st.columns(2)
 with col_f1: tmy_file = st.file_uploader("Nahrajte TMY (z PVGIS)", type="csv")
@@ -82,7 +79,6 @@ if tmy_file and char_file:
         for _, row in tmy.iterrows():
             t_out, m = row['T2m'], int(row['month'])
             t_v_req = np.interp(t_out, [t_design, 15], [t_voda_max, t_voda_min]) if t_out < 20 else t_voda_min
-            
             k_p = 1 - (max(0, t_v_req - 35.0) * 0.01)
             k_cop_ut = 1 - (max(0, t_v_req - 35.0) * 0.025)
             k_cop_tuv = 1 - (max(0, t_tuv_cil - 35.0) * 0.025)
@@ -102,7 +98,7 @@ if tmy_file and char_file:
 
         df_sim = pd.DataFrame(res, columns=['Temp', 'Month', 'Q_need', 'Q_tc', 'Q_biv', 'El_tc', 'El_biv'])
 
-        # Sumáře
+        # --- VÝPOČTY SUMY ---
         q_tc_s, q_biv_s = df_sim['Q_tc'].sum()/1000, df_sim['Q_biv'].sum()/1000
         el_tc_s, el_biv_s = df_sim['El_tc'].sum()/1000, df_sim['El_biv'].sum()/1000
         naklady_czt = (spotreba_ut + spotreba_tuv) * (cena_gj_czt * 3.6)
@@ -110,36 +106,30 @@ if tmy_file and char_file:
         uspora = naklady_czt - naklady_tc
         scop = q_tc_s / el_tc_s if el_tc_s > 0 else 0
 
-        # --- GRAFY (PŘESNĚ DLE ODSOUHLASENÉHO VIZUÁLU) ---
-        plt.rcParams.update({'font.size': 9})
-        
-        # 1. Hodinová výkonová rovnováha
-        fig1, ax1 = plt.subplots(figsize=(8, 4))
+        # --- GRAFY (PŮVODNÍ ODSOUHLASENÁ REPLIKACE) ---
+        fig1, ax1 = plt.subplots(figsize=(10, 5))
         tx = np.sort(df_sim['Temp'].unique())
         qy = [max(0, (ztrata * (20 - t) / (20 - t_design))) + q_tuv_avg for t in tx]
-        ax1.plot(tx, qy, 'r-', label='Potřeba objektu', linewidth=2)
-        ax1.set_title("Hodinová výkonová rovnováha"); ax1.set_xlabel("Venkovní teplota [°C]"); ax1.grid(True, alpha=0.2); ax1.legend()
+        ax1.plot(tx, qy, 'r-', label='Potřeba (ÚT+TUV)', linewidth=2.5)
+        ax1.set_title("Hodinová výkonová rovnováha"); ax1.set_xlabel("Teplota [°C]"); ax1.grid(True, alpha=0.3); ax1.legend()
 
-        # 2. Krytí potřeby tepla (Plošný graf)
-        fig2, ax2 = plt.subplots(figsize=(8, 4))
-        df_sort = df_sim.sort_values('Temp')
-        ax2.fill_between(df_sort['Temp'], 0, df_sort['Q_tc'], color='#3498db', label='Energie TČ')
-        ax2.fill_between(df_sort['Temp'], df_sort['Q_tc'], df_sort['Q_need'], color='#e74c3c', label='Bivalence')
-        ax2.set_title("Krytí potřeby tepla"); ax2.set_xlabel("Venkovní teplota [°C]"); ax2.legend()
+        fig2, ax2 = plt.subplots(figsize=(10, 5))
+        df_sorted = df_sim.sort_values('Temp')
+        ax2.fill_between(df_sorted['Temp'], 0, df_sorted['Q_tc'], color='#3498db', alpha=0.8, label='Energie TČ')
+        ax2.fill_between(df_sorted['Temp'], df_sorted['Q_tc'], df_sorted['Q_need'], color='#e74c3c', alpha=0.8, label='Bivalence')
+        ax2.set_title("Krytí potřeby tepla"); ax2.set_xlabel("Teplota [°C]"); ax2.legend()
 
-        # 3. Měsíční výroba tepla (Bar chart)
-        fig3, ax3 = plt.subplots(figsize=(8, 4))
+        fig3, ax3 = plt.subplots(figsize=(10, 4))
         df_sim.groupby('Month')[['Q_tc', 'Q_biv']].sum().plot(kind='bar', stacked=True, ax=ax3, color=['#3498db', '#e74c3c'])
-        ax3.set_title("Měsíční výroba tepla [kWh]"); ax3.set_xticklabels(['1','2','3','4','5','6','7','8','9','10','11','12'], rotation=0)
+        ax3.set_title("Měsíční výroba tepla [kWh]"); ax3.set_xticklabels(['Leden','Únor','Březen','Duben','Květen','Červen','Červenec','Srpen','Září','Říjen','Listopad','Prosinec'], rotation=0)
 
-        # 4. Ekonomika
         fig4, ax4 = plt.subplots(figsize=(8, 5))
         bars = ax4.bar(['Stávající CZT', 'Nová kaskáda TČ'], [naklady_czt, naklady_tc], color=['#95a5a6', '#2ecc71'])
         for b in bars:
-            ax4.text(b.get_x()+b.get_width()/2, b.get_height()+(naklady_czt*0.02), f'{int(b.get_height()):,} Kč'.replace(',',' '), ha='center', fontweight='bold')
+            ax4.text(b.get_x()+b.get_width()/2, b.get_height()+10000, f'{int(b.get_height()):,} Kč'.replace(',',' '), ha='center', fontweight='bold')
         ax4.set_title("Srovnání ročních nákladů")
 
-        # --- ZOBRAZENÍ ---
+        # --- ZOBRAZENÍ A PDF ---
         t1, t2 = st.tabs(["📉 Energetická bilance", "💰 Ekonomika a Export"])
         with t1:
             st.pyplot(fig1); st.pyplot(fig2); st.pyplot(fig3)
@@ -147,29 +137,24 @@ if tmy_file and char_file:
             st.metric("Roční úspora", f"{int(uspora):,} Kč".replace(',',' '))
             st.pyplot(fig4)
             
-            # --- PDF EXPORT (Původní struktura) ---
             if st.button("📄 Generovat kompletní PDF report"):
                 pdf = FPDF()
                 pdf.add_page()
                 pdf.set_font("Helvetica", 'B', 16)
-                pdf.cell(190, 10, f"ANALYZNI REPORT: {remove_accents(nazev_projektu)}", ln=True, align='C')
+                pdf.cell(190, 10, f"REPORT: {remove_accents(nazev_projektu)}", ln=True, align='C')
                 
-                pdf.ln(10); pdf.set_font("Helvetica", 'B', 12); pdf.cell(190, 10, "1. VSTUPNI PARAMETRY", ln=True)
+                pdf.ln(10); pdf.set_font("Helvetica", 'B', 12); pdf.cell(190, 10, "1. VSTUPY", ln=True)
                 pdf.set_font("Helvetica", '', 10)
-                pdf.cell(95, 7, f"Tepelna ztrata: {ztrata} kW"); pdf.cell(95, 7, f"Navrhova teplota: {t_design} C", ln=True)
-                pdf.cell(95, 7, f"TV_Max/Min: {t_voda_max}/{t_voda_min} C"); pdf.cell(95, 7, f"Limit TC: {limit_voda_tc} C", ln=True)
-                pdf.cell(95, 7, f"Teplota TUV: {t_tuv_cil} C"); pdf.cell(95, 7, f"Pocet TC: {pocet_tc} ks", ln=True)
+                pdf.cell(90, 7, f"Ztrata: {ztrata} kW"); pdf.cell(90, 7, f"T_design: {t_design} C", ln=True)
+                pdf.cell(90, 7, f"Voda: {t_voda_max}/{t_voda_min} C"); pdf.cell(90, 7, f"Limit TC: {limit_voda_tc} C", ln=True)
                 
                 pdf.ln(5); pdf.set_font("Helvetica", 'B', 12); pdf.cell(190, 10, "2. VYSLEDKY", ln=True)
                 pdf.set_font("Helvetica", '', 10)
-                pdf.cell(190, 7, f"Rocni uspora: {int(uspora):,} Kc".replace(',',' '), ln=True)
-                pdf.cell(190, 7, f"Prosta navratnost: {investice/uspora:.1f} let", ln=True)
+                pdf.cell(190, 7, f"Uspora: {int(uspora):,} Kc".replace(',',' '), ln=True)
                 pdf.cell(190, 7, f"SCOP: {scop:.2f}", ln=True)
 
-                pdf.add_page()
-                for i, f in enumerate([fig1, fig2, fig3, fig4]):
+                for f in [fig1, fig2, fig3, fig4]:
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                        f.savefig(tmp.name, dpi=110)
-                        pdf.image(tmp.name, x=15, w=170)
-                        pdf.ln(5)
-                st.download_button("⬇️ Stáhnout PDF", data=pdf.output(dest='S').encode('latin-1', 'replace'), file_name="Report_TC.pdf")
+                        f.savefig(tmp.name, dpi=110); pdf.image(tmp.name, x=15, w=170); pdf.ln(5)
+                
+                st.download_button("⬇️ Stáhnout PDF", data=pdf.output(dest='S').encode('latin-1', 'replace'), file_name="Report.pdf")
