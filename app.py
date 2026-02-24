@@ -95,7 +95,8 @@ if tmy_up and char_up:
             cop = np.interp(t_out, df_char['Teplota'], df_char['COP'])
             q_tc = min(q_total, p_max)
             q_biv = max(0, q_total - q_tc)
-            res.append([t_out, q_total, q_tc, q_biv, q_tc/cop if q_tc > 0 else 0, q_biv/0.98])
+            # Ukládáme energii v kWh (výkon * 1h)
+            res.append([round(t_out), q_total, q_tc, q_biv, q_tc/cop if q_tc > 0 else 0, q_biv/0.98])
 
         df_sim = pd.DataFrame(res, columns=['Temp', 'Q_need', 'Q_tc', 'Q_biv', 'El_tc', 'El_biv'])
         
@@ -108,7 +109,7 @@ if tmy_up and char_up:
         fig = plt.figure(figsize=(16, 12))
         plt.suptitle(f"EXPERTNÍ ANALÝZA: {nazev_projektu}", fontsize=18, fontweight='bold')
 
-        # A. Graf 1: Dynamika provozu (Vracíme k původní správné verzi)
+        # A. Graf 1: Dynamika provozu (FIXNÍ DLE COLABU)
         ax1 = plt.subplot(2, 2, 1)
         t_range = np.linspace(-15, 18, 100)
         q_domu = [(ztrata_celkova * (20 - t) / (20 - t_design) * k_oprava) + q_tuv_avg for t in t_range]
@@ -129,17 +130,17 @@ if tmy_up and char_up:
         ax1.set_xlabel("Venkovní teplota [°C]"); ax1.set_ylabel("Výkon [kW]")
         ax1.legend(loc='lower right', fontsize=9); ax1.grid(alpha=0.2)
 
-        # B. Graf 2: Energetické pokrytí (Nová verze dle poslední přílohy)
+        # B. Graf 2: ENERGETICKÉ POKRYTÍ (SLOUPCOVÝ DLE TEPLOT)
         ax2 = plt.subplot(2, 2, 2)
-        # Seskupení dat dle teploty pro hladkou vizualizaci plochy
-        df_area = df_sim.groupby('Temp').mean().sort_index()
-        ax2.fill_between(df_area.index, 0, df_area['Q_tc'], color='#3498db', alpha=0.7, label='Energie dodaná TČ')
-        ax2.fill_between(df_area.index, df_area['Q_tc'], df_area['Q_need'], color='#e74c3c', alpha=0.7, label='Bivalentní energie')
-        ax2.plot(df_area.index, df_area['Q_need'], color='black', lw=0.5, alpha=0.5)
+        # Seskupení sumy energie (kWh) podle zaokrouhlené teploty
+        df_temp_sum = df_sim.groupby('Temp')[['Q_tc', 'Q_biv']].sum().sort_index()
         
-        ax2.set_title("ENERGETICKÉ POKRYTÍ DLE VENKOVNÍ TEPLOTY", fontweight='bold')
-        ax2.set_xlabel("Venkovní teplota [°C]"); ax2.set_ylabel("Výkon [kW]")
-        ax2.legend(loc='upper right', fontsize=9); ax2.grid(alpha=0.2)
+        ax2.bar(df_temp_sum.index, df_temp_sum['Q_tc'], color='#3498db', label='Energie dodaná TČ [kWh]')
+        ax2.bar(df_temp_sum.index, df_temp_sum['Q_biv'], bottom=df_temp_sum['Q_tc'], color='#e74c3c', label='Bivalentní energie [kWh]')
+        
+        ax2.set_title("ROZDĚLENÍ DODANÉ ENERGIE DLE VENKOVNÍ TEPLOTY", fontweight='bold')
+        ax2.set_xlabel("Venkovní teplota [°C]"); ax2.set_ylabel("Celková energie [kWh]")
+        ax2.legend(loc='upper right', fontsize=9); ax2.grid(alpha=0.2, axis='y')
 
         # C. Graf 3: Ekonomické srovnání
         ax3 = plt.subplot(2, 2, 3)
@@ -166,24 +167,13 @@ if tmy_up and char_up:
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         st.pyplot(fig)
 
-        # --- EXPORT DO PDF ---
+        # --- EXPORT ---
         if st.button("📄 Exportovat kompletní PDF report"):
             pdf = FPDF()
             pdf.add_page()
             pdf.set_font("Helvetica", 'B', 16)
             pdf.cell(190, 10, f"ANALYZNI REPORT: {remove_accents(nazev_projektu)}", ln=True, align='C')
-            
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                 fig.savefig(tmp.name, dpi=150)
                 pdf.image(tmp.name, x=10, y=35, w=190)
-            
-            pdf.ln(130)
-            pdf.set_font("Helvetica", '', 10)
-            pdf.cell(190, 7, f"Vypocet proveden pro kaskadu {pocet_tc} TC.", ln=True)
-            
             st.download_button("⬇️ Stáhnout PDF", data=pdf.output(dest='S').encode('latin-1', 'replace'), file_name="Report.pdf")
-
-        # Excel export (robustní verze)
-        output = io.BytesIO()
-        df_sim.to_excel(output, index=False)
-        st.download_button("⬇️ Stáhnout Excel", data=output.getvalue(), file_name="Data_simulace.xlsx")
