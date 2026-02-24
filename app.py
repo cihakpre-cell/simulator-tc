@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import io
+from fpdf import FPDF
+import tempfile
 
 # --- 1. KONFIGURACE STRÁNKY ---
 st.set_page_config(page_title="Energetický Simulátor TČ", layout="wide")
@@ -92,40 +94,51 @@ if tmy_file and char_file:
         naklady_czt = (spotreba_ut + spotreba_tuv) * (cena_gj_czt * 3.6)
         naklady_tc = (el_tc_s + el_biv_s) * cena_el + 17000
         uspora = naklady_czt - naklady_tc
+        navratnost = investice / uspora if uspora > 0 else 0
 
         # --- ZOBRAZENÍ ---
         st.header(f"📊 Analýza systému: {nazev_projektu}")
         tab1, tab2 = st.tabs(["📉 Výkonová a Energetická bilance", "💰 Ekonomika a přínosy"])
         
+        # --- GRAFY PRO PDF A ZOBRAZENÍ ---
+        # Graf 1: Výkonová rovnováha
+        fig1, ax1 = plt.subplots(figsize=(10,6))
+        tx = np.linspace(df_sim['Temp'].min(), 20, 50)
+        qy = [max(0, (ztrata * (20 - t) / (20 - t_design) * k_oprava)) + q_tuv_avg for t in tx]
+        py = [np.interp(t, df_char['Teplota'], df_char['Vykon_kW']) * pocet_tc * (1-(max(0,np.interp(t,[t_design,15],[t_voda_max,t_voda_min])-35)*0.01)) for t in tx]
+        ax1.plot(tx, qy, 'r-', label='Potřeba objektu', linewidth=2)
+        ax1.plot(tx, py, 'b--', label='Výkon kaskády TČ', linewidth=2)
+        ax1.set_xlabel("Venkovní teplota [°C]"); ax1.set_ylabel("Výkon [kW]"); ax1.grid(True, alpha=0.3); ax1.legend()
+
+        # Graf 2: Energetické pokrytí
+        df_binned = df_sim.groupby('Temp').agg({'Q_tc':'sum', 'Q_biv':'sum'}).reset_index()
+        df_binned[['Q_tc', 'Q_biv']] /= 1000
+        fig2, ax2 = plt.subplots(figsize=(10,6))
+        ax2.bar(df_binned['Temp'], df_binned['Q_tc'], color='#3498db', label='Energie z TČ')
+        ax2.bar(df_binned['Temp'], df_binned['Q_biv'], bottom=df_binned['Q_tc'], color='#e74c3c', label='Energie z bivalence')
+        ax2.set_xlabel("Venkovní teplota [°C]"); ax2.set_ylabel("Energie [MWh]"); ax2.legend()
+
+        # Graf 3: Pie Chart
+        fig_pie, ax_pie = plt.subplots(figsize=(4,4))
+        ax_pie.pie([el_tc_s, el_biv_s], labels=['TČ', 'Biv'], autopct='%1.1f%%', colors=['#3498db','#e74c3c'], startangle=90)
+
+        # Graf 4: Ekonomika srovnání
+        fig_econ, ax_econ = plt.subplots(figsize=(10, 5))
+        ax_econ.bar(['CZT', 'TČ'], [naklady_czt, naklady_tc], color=['#95a5a6', '#2ecc71'], width=0.5)
+        ax_econ.set_ylabel("Náklady [Kč/rok]")
+
         with tab1:
             col_a, col_b = st.columns(2)
             with col_a:
                 st.subheader("1. Výkonová rovnováha (kW)")
-                tx = np.linspace(df_sim['Temp'].min(), 20, 50)
-                qy = [max(0, (ztrata * (20 - t) / (20 - t_design) * k_oprava)) + q_tuv_avg for t in tx]
-                py = [np.interp(t, df_char['Teplota'], df_char['Vykon_kW']) * pocet_tc * (1-(max(0,np.interp(t,[t_design,15],[t_voda_max,t_voda_min])-35)*0.01)) for t in tx]
-                fig1, ax1 = plt.subplots(figsize=(10,6))
-                ax1.plot(tx, qy, 'r-', label='Potřeba objektu', linewidth=2)
-                ax1.plot(tx, py, 'b--', label='Výkon kaskády TČ', linewidth=2)
-                ax1.set_xlabel("Venkovní teplota [°C]"); ax1.set_ylabel("Výkon [kW]"); ax1.grid(True, alpha=0.3); ax1.legend()
                 st.pyplot(fig1)
-
             with col_b:
                 st.subheader("2. Energetické pokrytí (MWh)")
-                df_binned = df_sim.groupby('Temp').agg({'Q_tc':'sum', 'Q_biv':'sum'}).reset_index()
-                df_binned[['Q_tc', 'Q_biv']] /= 1000
-                fig2, ax2 = plt.subplots(figsize=(10,6))
-                ax2.bar(df_binned['Temp'], df_binned['Q_tc'], color='#3498db', label='Energie z TČ')
-                ax2.bar(df_binned['Temp'], df_binned['Q_biv'], bottom=df_binned['Q_tc'], color='#e74c3c', label='Energie z bivalence')
-                ax2.set_xlabel("Venkovní teplota [°C]"); ax2.set_ylabel("Energie [MWh]"); ax2.legend()
                 st.pyplot(fig2)
-
             st.markdown("---")
             col_c1, col_c2 = st.columns([1, 2])
             with col_c1:
                 st.subheader("Podíl bivalence na ELEKTŘINĚ")
-                fig_pie, ax_pie = plt.subplots(figsize=(3,3)) # Menší velikost
-                ax_pie.pie([el_tc_s, el_biv_s], labels=['TČ', 'Biv'], autopct='%1.1f%%', colors=['#3498db','#e74c3c'], startangle=90)
                 st.pyplot(fig_pie)
             with col_c2:
                 st.subheader("Sumář roční energie")
@@ -137,26 +150,53 @@ if tmy_file and char_file:
                     "Podíl na el.": [f"{(el_tc_s/(el_tc_s+el_biv_s))*100:.1f} %", f"{(el_biv_s/(el_tc_s+el_biv_s))*100:.1f} %", "100 %"]
                 }
                 st.table(pd.DataFrame(data_sumar))
-                st.warning("💡 Všimněte si: Bivalence vyrobí malé % tepla, ale spotřebuje velké % elektřiny (má COP 1).")
 
         with tab2:
             c1, c2, c3 = st.columns(3)
             c1.metric("Roční úspora", f"{uspora:,.0f} Kč")
-            c2.metric("Návratnost", f"{investice/uspora:.1f} let" if uspora > 0 else "N/A")
+            c2.metric("Návratnost", f"{navratnost:.1f} let" if uspora > 0 else "N/A")
             c3.metric("SCOP systému", f"{q_tc_s / el_tc_s:.2f}")
-
             st.markdown("---")
-            st.subheader("Srovnání ročních provozních nákladů")
-            fig3, ax3 = plt.subplots(figsize=(10, 5))
-            labels = ['Stávající stav (CZT)', 'Nový stav (Kaskáda TČ)']
-            costs = [naklady_czt, naklady_tc]
-            bars = ax3.bar(labels, costs, color=['#95a5a6', '#2ecc71'], width=0.5)
-            ax3.set_ylabel("Náklady [Kč/rok]")
-            for bar in bars:
-                height = bar.get_height()
-                ax3.text(bar.get_x() + bar.get_width()/2., height + 5000, f'{height:,.0f} Kč', ha='center', va='bottom', fontweight='bold')
-            st.pyplot(fig3)
+            st.pyplot(fig_econ)
+
+        # --- EXPORT PDF FUNKCE ---
+        def generate_pdf():
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Arial", 'B', 16)
+            pdf.cell(190, 10, f"Report energeticke simulace: {nazev_projektu}", ln=True, align='C')
             
-            st.info(f"Projektovaná roční úspora činí {uspora:,.0f} Kč, což představuje snížení nákladů o {((uspora/naklady_czt)*100):.1f} %.")
-            buf = io.BytesIO(); df_sim.to_excel(buf, index=False)
-            st.download_button("📥 Stáhnout detailní data (Excel)", buf.getvalue(), "analyza_projektu.xlsx")
+            pdf.set_font("Arial", 'B', 12)
+            pdf.cell(190, 10, "1. Zadavaci parametry", ln=True)
+            pdf.set_font("Arial", '', 10)
+            pdf.cell(190, 7, f"Tepelna ztrata: {ztrata} kW (pri {t_design} C)", ln=True)
+            pdf.cell(190, 7, f"Otopna soustava: {t_voda_max}/{t_voda_min} C", ln=True)
+            pdf.cell(190, 7, f"Pocet TC v kaskade: {pocet_tc}", ln=True)
+            pdf.cell(190, 7, f"Rocni potreba (UT+TUV): {spotreba_ut + spotreba_tuv} MWh", ln=True)
+            
+            pdf.set_font("Arial", 'B', 12)
+            pdf.cell(190, 10, "2. Vysledky ekonomiky", ln=True)
+            pdf.set_font("Arial", '', 10)
+            pdf.cell(190, 7, f"Odhadovana rocni uspora: {uspora:,.0f} Kc", ln=True)
+            pdf.cell(190, 7, f"Prostata navratnost: {navratnost:.1f} let", ln=True)
+            pdf.cell(190, 7, f"SCOP systemu: {q_tc_s / el_tc_s:.2f}", ln=True)
+
+            # Přidání grafů
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
+                fig1.savefig(tmpfile.name, format="png")
+                pdf.image(tmpfile.name, x=10, y=pdf.get_y() + 5, w=90)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
+                fig2.savefig(tmpfile.name, format="png")
+                pdf.image(tmpfile.name, x=105, y=pdf.get_y() + 5, w=90)
+            
+            return pdf.output(dest='S').encode('latin-1')
+
+        st.sidebar.markdown("---")
+        if st.sidebar.button("📄 Generovat PDF Report"):
+            pdf_data = generate_pdf()
+            st.sidebar.download_button("⬇️ Stáhnout PDF", pdf_data, f"Report_{nazev_projektu}.pdf", "application/pdf")
+
+        buf = io.BytesIO(); df_sim.to_excel(buf, index=False)
+        st.download_button("📥 Stáhnout Excel", buf.getvalue(), "analyza.xlsx")
+else:
+    st.info("Nahrajte soubory pro spusteni exportu.")
