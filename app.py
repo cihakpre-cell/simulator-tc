@@ -3,30 +3,16 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import io
+import unicodedata
+import tempfile
+from fpdf import FPDF
 
-# --- 1. KONFIGURACE STRÁNKY ---
-st.set_page_config(page_title="Energetický Simulátor TČ", layout="wide")
-st.title("🚀 Profesionální simulátor kaskády TČ")
+# --- 1. POMOCNÉ FUNKCE ---
+def remove_accents(input_str):
+    if not input_str: return ""
+    nfkd_form = unicodedata.normalize('NFKD', str(input_str))
+    return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
 
-# --- 2. SIDEBAR ---
-st.sidebar.header("⚙️ Systémové parametry")
-with st.sidebar:
-    nazev_projektu = st.text_input("Název projektu", "SVJ Sládkovičova")
-    ztrata = st.number_input("Tepelná ztráta [kW]", value=54.0)
-    t_design = st.number_input("Návrhová venkovní teplota [°C]", value=-12.0)
-    st.markdown("---")
-    t_voda_max = st.number_input("Teplota vody při návrhové t. [°C]", value=60.0)
-    t_voda_min = st.number_input("Teplota vody při +15°C [°C]", value=35.0)
-    st.markdown("---")
-    spotreba_ut = st.number_input("Spotřeba ÚT [MWh/rok]", value=124.0)
-    spotreba_tuv = st.number_input("Spotřeba TUV [MWh/rok]", value=76.0)
-    pocet_tc = st.slider("Počet TČ v kaskádě", 1, 10, 3)
-    st.markdown("---")
-    cena_el = st.number_input("Cena elektřiny [Kč/MWh]", value=4800.0)
-    cena_gj_czt = st.number_input("Cena CZT [Kč/GJ]", value=1284.0)
-    investice = st.number_input("Investice celkem [Kč]", value=3800000.0)
-
-# --- 3. POMOCNÉ FUNKCE ---
 def load_tmy_robust(file):
     try:
         content = file.getvalue().decode('utf-8', errors='ignore').splitlines()
@@ -45,6 +31,32 @@ def load_char(file):
         df.columns = df.columns.str.strip()
         return df[['Teplota', 'Vykon_kW', 'COP']].copy()
     except: return None
+
+# --- 2. KONFIGURACE STRÁNKY ---
+st.set_page_config(page_title="Energetický Simulátor TČ", layout="wide")
+st.title("🚀 Profesionální simulátor kaskády TČ")
+
+# --- 3. SIDEBAR ---
+st.sidebar.header("⚙️ Systémové parametry")
+with st.sidebar:
+    nazev_projektu = st.text_input("Název projektu", "SVJ Sladkovičova")
+    ztrata = st.number_input("Tepelná ztráta [kW]", value=54.0)
+    t_design = st.number_input("Návrhová venkovní teplota [°C]", value=-12.0)
+    st.markdown("---")
+    st.markdown("### 🌡️ Otopná soustava")
+    t_voda_max = st.number_input("Teplota vody při návrhové t. [°C]", value=60.0)
+    t_voda_min = st.number_input("Teplota vody při +15°C [°C]", value=35.0)
+    st.markdown("---")
+    st.markdown("### 🚿 Příprava TUV")
+    t_tuv_cil = st.number_input("Cílová teplota TUV [°C]", value=55.0) # NOVÝ PARAMETR
+    spotreba_tuv = st.number_input("Spotřeba TUV [MWh/rok]", value=76.0)
+    st.markdown("---")
+    spotreba_ut = st.number_input("Spotřeba ÚT [MWh/rok]", value=124.0)
+    pocet_tc = st.slider("Počet TČ v kaskádě", 1, 10, 3)
+    st.markdown("---")
+    cena_el = st.number_input("Cena elektřiny [Kč/MWh]", value=4800.0)
+    cena_gj_czt = st.number_input("Cena CZT [Kč/GJ]", value=1284.0)
+    investice = st.number_input("Investice celkem [Kč]", value=3800000.0)
 
 # --- 4. NAHRÁNÍ DAT ---
 st.subheader("📁 1. Krok: Nahrání dat")
@@ -75,11 +87,15 @@ if tmy_file and char_file:
         res = []
         for t_out, t_sm in zip(tmy['T2m'], tmy['T_smooth']):
             t_voda_req = np.interp(t_sm, [t_design, 15], [t_voda_max, t_voda_min]) if t_sm < 20 else t_voda_min
+            
+            # Korekce dle teploty otopné vody
             delta_t = max(0, t_voda_req - 35.0)
             k_p, k_cop = 1 - (delta_t * 0.01), 1 - (delta_t * 0.025)
+            
             q_need = max(0, (ztrata * (20 - t_sm) / (20 - t_design) * k_oprava)) + q_tuv_avg
             p_real = np.interp(t_out, df_char['Teplota'], df_char['Vykon_kW']) * pocet_tc * k_p
             cop_real = np.interp(t_out, df_char['Teplota'], df_char['COP']) * k_cop
+            
             q_tc = min(q_need, p_real)
             q_biv = max(0, q_need - q_tc)
             res.append([t_out, q_need, q_tc, q_biv, q_tc/cop_real if q_tc > 0 else 0, q_biv/0.98])
@@ -92,6 +108,7 @@ if tmy_file and char_file:
         naklady_czt = (spotreba_ut + spotreba_tuv) * (cena_gj_czt * 3.6)
         naklady_tc = (el_tc_s + el_biv_s) * cena_el + 17000
         uspora = naklady_czt - naklady_tc
+        scop_sys = q_tc_s / el_tc_s if el_tc_s > 0 else 0
 
         # --- ZOBRAZENÍ ---
         st.header(f"📊 Analýza systému: {nazev_projektu}")
@@ -124,7 +141,7 @@ if tmy_file and char_file:
             col_c1, col_c2 = st.columns([1, 2])
             with col_c1:
                 st.subheader("Podíl bivalence na ELEKTŘINĚ")
-                fig_pie, ax_pie = plt.subplots(figsize=(3,3)) # Menší velikost
+                fig_pie, ax_pie = plt.subplots(figsize=(3,3))
                 ax_pie.pie([el_tc_s, el_biv_s], labels=['TČ', 'Biv'], autopct='%1.1f%%', colors=['#3498db','#e74c3c'], startangle=90)
                 st.pyplot(fig_pie)
             with col_c2:
@@ -137,26 +154,66 @@ if tmy_file and char_file:
                     "Podíl na el.": [f"{(el_tc_s/(el_tc_s+el_biv_s))*100:.1f} %", f"{(el_biv_s/(el_tc_s+el_biv_s))*100:.1f} %", "100 %"]
                 }
                 st.table(pd.DataFrame(data_sumar))
-                st.warning("💡 Všimněte si: Bivalence vyrobí malé % tepla, ale spotřebuje velké % elektřiny (má COP 1).")
 
         with tab2:
             c1, c2, c3 = st.columns(3)
-            c1.metric("Roční úspora", f"{uspora:,.0f} Kč")
+            c1.metric("Roční úspora", f"{int(uspora):,} Kč".replace(',', ' '))
             c2.metric("Návratnost", f"{investice/uspora:.1f} let" if uspora > 0 else "N/A")
-            c3.metric("SCOP systému", f"{q_tc_s / el_tc_s:.2f}")
+            c3.metric("SCOP systému", f"{scop_sys:.2f}")
 
             st.markdown("---")
             st.subheader("Srovnání ročních provozních nákladů")
             fig3, ax3 = plt.subplots(figsize=(10, 5))
-            labels = ['Stávající stav (CZT)', 'Nový stav (Kaskáda TČ)']
+            labels = ['Stávající stav (CZT)', f'Nový stav ({pocet_tc}ks TČ)']
             costs = [naklady_czt, naklady_tc]
             bars = ax3.bar(labels, costs, color=['#95a5a6', '#2ecc71'], width=0.5)
             ax3.set_ylabel("Náklady [Kč/rok]")
             for bar in bars:
                 height = bar.get_height()
-                ax3.text(bar.get_x() + bar.get_width()/2., height + 5000, f'{height:,.0f} Kč', ha='center', va='bottom', fontweight='bold')
+                ax3.text(bar.get_x() + bar.get_width()/2., height + (max(costs)*0.02), f'{int(height):,} Kč'.replace(',', ' '), ha='center', va='bottom', fontweight='bold')
             st.pyplot(fig3)
+
+            # --- EXPORTY ---
+            st.markdown("---")
+            col_ex1, col_ex2 = st.columns(2)
             
-            st.info(f"Projektovaná roční úspora činí {uspora:,.0f} Kč, což představuje snížení nákladů o {((uspora/naklady_czt)*100):.1f} %.")
-            buf = io.BytesIO(); df_sim.to_excel(buf, index=False)
-            st.download_button("📥 Stáhnout detailní data (Excel)", buf.getvalue(), "analyza_projektu.xlsx")
+            with col_ex1:
+                if st.button("📄 Generovat PDF Report"):
+                    try:
+                        pdf = FPDF()
+                        pdf.add_page()
+                        pdf.set_font("Helvetica", 'B', 16)
+                        pdf.cell(190, 10, f"ANALYZNI REPORT: {remove_accents(nazev_projektu)}", ln=True, align='C')
+                        
+                        pdf.ln(10)
+                        pdf.set_font("Helvetica", 'B', 12)
+                        pdf.cell(190, 10, "1. VSTUPNI PARAMETRY", ln=True)
+                        pdf.set_font("Helvetica", '', 10)
+                        pdf.cell(95, 7, f"Tepelna ztrata: {ztrata} kW", ln=False)
+                        pdf.cell(95, 7, f"Navrhova teplota: {t_design} C", ln=True)
+                        pdf.cell(95, 7, f"Teplota vody (max/min): {t_voda_max}/{t_voda_min} C", ln=False)
+                        pdf.cell(95, 7, f"Cilova teplota TUV: {t_tuv_cil} C", ln=True)
+                        pdf.cell(95, 7, f"Pocet TC v kaskade: {pocet_tc} ks", ln=False)
+                        pdf.cell(95, 7, f"Investice: {int(investice):,} Kc".replace(',',' '), ln=True)
+
+                        pdf.ln(5)
+                        pdf.set_font("Helvetica", 'B', 12)
+                        pdf.cell(190, 10, "2. VYSLEDKY EKONOMIKY", ln=True)
+                        pdf.set_font("Helvetica", '', 10)
+                        pdf.cell(190, 7, f"Projektovana rocni uspora: {int(uspora):,} Kc".replace(',',' '), ln=True)
+                        pdf.cell(190, 7, f"Prosta navratnost: {investice/uspora:.1f} let" if uspora > 0 else "N/A", ln=True)
+                        pdf.cell(190, 7, f"SCOP systemu: {scop_sys:.2f}", ln=True)
+
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                            fig3.savefig(tmp.name, dpi=100); pdf.image(tmp.name, x=45, y=pdf.get_y()+10, w=120)
+
+                        st.download_button("⬇️ Stáhnout PDF", data=pdf.output(dest='S').encode('latin-1', 'replace'), file_name=f"Report_{remove_accents(nazev_projektu)}.pdf")
+                    except Exception as e:
+                        st.error(f"Chyba při tvorbě PDF: {e}")
+
+            with col_ex2:
+                buf = io.BytesIO(); df_sim.to_excel(buf, index=False)
+                st.download_button("📥 Stáhnout Excel data", buf.getvalue(), f"Analyza_{remove_accents(nazev_projektu)}.xlsx")
+
+else:
+    st.info("Nahrajte prosím oba soubory (TMY a charakteristiku) pro spuštění výpočtu.")
