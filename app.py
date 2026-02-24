@@ -3,11 +3,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import io
-import unicodedata
-import tempfile
-from fpdf import FPDF
 
-# --- ROBUSTNÍ NAČÍTÁNÍ TMY ---
+# --- FUNKCE NAČÍTÁNÍ (Robustní) ---
 def load_tmy_robust(file):
     try:
         content = file.getvalue().decode('utf-8', errors='ignore').splitlines()
@@ -31,7 +28,7 @@ def load_char(file):
         return df[['Teplota', 'Vykon_kW', 'COP']].apply(pd.to_numeric, errors='coerce').dropna()
     except: return None
 
-# --- KONFIGURACE STRÁNKY ---
+# --- UI ---
 st.set_page_config(page_title="Expertní simulátor TČ", layout="wide")
 
 with st.sidebar:
@@ -65,7 +62,7 @@ if tmy_up and char_up:
             cop = np.interp(t_out, char['Teplota'], char['COP'])
             q_tc = min(q_total, p_max)
             q_biv = max(0, q_total - q_tc)
-            res.append([round(t_out), q_total, q_tc, q_biv, q_tc/cop if q_tc > 0 else 0, q_biv/0.98])
+            res.append([t_out, q_total, q_tc, q_biv, q_tc/cop if q_tc > 0 else 0, q_biv/0.98])
 
         df_sim = pd.DataFrame(res, columns=['Temp', 'Q_need', 'Q_tc', 'Q_biv', 'El_tc', 'El_biv'])
         
@@ -76,10 +73,10 @@ if tmy_up and char_up:
                 t_biv = t
                 break
 
-        # --- VIZUALIZACE 2x2 ---
+        # --- GRAFICKÝ VÝSTUP ---
         fig = plt.figure(figsize=(18, 14))
         
-        # 1. GRAF: DYNAMIKA (FIXNÍ)
+        # 1. DYNAMIKA PROVOZU (FIXNÍ)
         ax1 = plt.subplot(2, 2, 1)
         tr = np.linspace(-15, 18, 100)
         q_p = [(ztrata_celkova * (20 - t) / (20 - t_design) * k_oprava) + q_tuv_avg for t in tr]
@@ -95,47 +92,48 @@ if tmy_up and char_up:
         ax1.set_title("DYNAMIKA PROVOZU A MODULACE", fontweight='bold')
         ax1.legend(loc='lower right', fontsize=8); ax1.grid(alpha=0.2)
 
-        # 2. GRAF: ENERGETICKÝ MIX (FIXNÍ)
+        # 2. ENERGETICKÝ MIX (FIXNÍ)
         ax2 = plt.subplot(2, 2, 2)
-        df_t = df_sim.groupby('Temp')[['Q_tc', 'Q_biv']].sum().sort_index()
+        df_sim['Temp_R'] = df_sim['Temp'].round()
+        df_t = df_sim.groupby('Temp_R')[['Q_tc', 'Q_biv']].sum().sort_index()
         ax2.bar(df_t.index, df_t['Q_tc'], color='#3498db', label='Energie TČ')
         ax2.bar(df_t.index, df_t['Q_biv'], bottom=df_t['Q_tc'], color='#e74c3c', label='Bivalence')
         ax2.set_title("ROZDĚLENÍ ENERGIE DLE VENKOVNÍ TEPLOTY", fontweight='bold')
         ax2.legend(fontsize=8); ax2.grid(alpha=0.1, axis='y')
 
-        # 3. GRAF: BILANCE (FIXNÍ + OPRAVENÁ TABULKA)
+        # 3. VÝSEČOVÝ GRAF + BILANCE (ZAFIXOVÁNO)
         ax3 = plt.subplot(2, 2, 3)
         q_tc_s, q_bv_s = df_sim['Q_tc'].sum()/1000, df_sim['Q_biv'].sum()/1000
         el_tc_s, el_bv_s = df_sim['El_tc'].sum()/1000, df_sim['El_biv'].sum()/1000
         total_q, total_el = q_tc_s + q_bv_s, el_tc_s + el_bv_s
-        
-        ax3.pie([q_tc_s, q_bv_s], labels=['TČ', 'Biv.'], autopct='%1.1f%%', startangle=90, colors=['#3498db', '#e74c3c'], wedgeprops=dict(width=0.4))
-        ax3.set_title("ROČNÍ ENERGETICKÁ BILANCE", fontweight='bold')
+        ax3.pie([q_tc_s, q_bv_s], labels=['TČ', 'Biv.'], autopct='%1.1f%%', startangle=90, 
+                colors=['#3498db', '#e74c3c'], explode=(0, 0.1), shadow=True)
+        ax3.set_title("PODÍL NA DODANÉM TEPLE", fontweight='bold')
         
         table_data = [
             ["Zdroj", "Teplo [MWh]", "Teplo [%]", "El. [MWh]", "El. [%]"],
-            ["TČ", f"{q_tc_s:.1f}", f"{(q_tc_s/total_q)*100:.1f}%", f"{el_tc_s:.1f}", f"{(el_tc_s/total_el)*100:.1f}%"],
-            ["Biv.", f"{q_bv_s:.1f}", f"{(q_bv_s/total_q)*100:.1f}%", f"{el_bv_s:.1f}", f"{(el_bv_s/total_el)*100:.1f}%"],
-            ["Suma", f"{total_q:.1f}", "100%", f"{total_el:.1f}", "100%"]
+            ["Tepelná čerpadla", f"{q_tc_s:.1f}", f"{(q_tc_s/total_q)*100:.1f}%", f"{el_tc_s:.1f}", f"{(el_tc_s/total_el)*100:.1f}%"],
+            ["Bivalentní zdroj", f"{q_bv_s:.1f}", f"{(q_bv_s/total_q)*100:.1f}%", f"{el_bv_s:.1f}", f"{(el_bv_s/total_el)*100:.1f}%"],
+            ["CELKEM", f"{total_q:.1f}", "100%", f"{total_el:.1f}", "100%"]
         ]
         tbl = ax3.table(cellText=table_data, loc='bottom', cellLoc='center', bbox=[0, -0.45, 1, 0.35])
         tbl.auto_set_font_size(False); tbl.set_fontsize(9)
         for i in range(5): tbl[(0, i)].set_facecolor("#f2f2f2")
 
-        # 4. GRAF: ČETNOST TEPLOT (NOVÝ DLE PŘÍLOHY)
+        # 4. ČETNOST TEPLOT V ROCE (FIXNÍ - OSA X = HODINY)
         ax4 = plt.subplot(2, 2, 4)
-        counts = df_sim['Temp'].value_counts().sort_index()
-        colors = ['#e74c3c' if x < t_biv else '#3498db' for x in counts.index]
-        ax4.bar(counts.index, counts.values, color=colors, alpha=0.8, edgecolor='black', lw=0.5)
-        ax4.axvline(t_biv, color='black', ls='--', lw=2, label=f'Bod bivalence {t_biv:.1f}°C')
+        temps_sorted = np.sort(df_sim['Temp'].values) # Seřazení teplot od nejnižší po nejvyšší
+        hours = np.arange(len(temps_sorted))
         
-        # Popis oblastí
-        ax4.text(t_biv-2, max(counts.values)*0.9, 'Bivalentní\nprovoz', ha='right', color='#e74c3c', fontweight='bold')
-        ax4.text(t_biv+2, max(counts.values)*0.9, 'Monovalentní\nprovoz', ha='left', color='#3498db', fontweight='bold')
+        # Vybarvení oblastí
+        ax4.fill_between(hours, temps_sorted, t_biv, where=(temps_sorted < t_biv), color='#e74c3c', alpha=0.3, label='Bivalentní provoz')
+        ax4.fill_between(hours, temps_sorted, t_biv, where=(temps_sorted >= t_biv), color='#3498db', alpha=0.3, label='Monovalentní provoz')
+        ax4.plot(hours, temps_sorted, color='black', lw=1.5)
         
-        ax4.set_title("ČETNOST TEPLOT A BOD BIVALENCE", fontweight='bold')
-        ax4.set_xlabel("Venkovní teplota [°C]"); ax4.set_ylabel("Počet hodin v roce")
-        ax4.grid(alpha=0.2); ax4.legend(loc='upper left', fontsize=8)
+        ax4.axhline(t_biv, color='black', ls='--', lw=2, label=f'Bod bivalence {t_biv:.1f}°C')
+        ax4.set_title("ČETNOST TEPLOT V ROCE", fontweight='bold')
+        ax4.set_xlabel("Hodin v roce"); ax4.set_ylabel("Venkovní teplota [°C]")
+        ax4.set_xlim(0, 8760); ax4.grid(alpha=0.2); ax4.legend(loc='upper left', fontsize=8)
 
         plt.tight_layout(rect=[0, 0.05, 1, 0.95])
         st.pyplot(fig)
