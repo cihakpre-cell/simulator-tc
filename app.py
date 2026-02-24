@@ -64,7 +64,7 @@ if tmy_file and char_file:
         # Příprava TMY
         tmy = tmy_raw.copy()
         tmy.columns = tmy.columns.str.strip()
-        tmy['T2m'] = pd.to_numeric(tmy['T2m'], errors='coerce')
+        tmy['T2m'] = pd.to_numeric(tmy['T2m'], errors='coerce').round(0) # Zaokrouhlíme pro seskupení v grafu
         tmy = tmy.dropna(subset=['T2m']).reset_index(drop=True)
         tmy['T_smooth'] = tmy['T2m'].rolling(window=6, min_periods=1).mean()
 
@@ -77,7 +77,8 @@ if tmy_file and char_file:
         for t_out, t_sm in zip(tmy['T2m'], tmy['T_smooth']):
             t_voda_req = np.interp(t_sm, [t_design, 15], [t_voda_max, t_voda_min]) if t_sm < 20 else t_voda_min
             delta_t = max(0, t_voda_req - 35.0)
-            k_cop, k_p = 1 - (delta_t * 0.025), 1 - (delta_t * 0.01)
+            k_p = 1 - (delta_t * 0.01)
+            k_cop = 1 - (delta_t * 0.025)
 
             q_need = max(0, (ztrata * (20 - t_sm) / (20 - t_design) * k_oprava)) + q_tuv_avg
             p_base = np.interp(t_out, df_char['Teplota'], df_char['Vykon_kW']) * pocet_tc
@@ -98,63 +99,63 @@ if tmy_file and char_file:
         naklady_czt = (spotreba_ut + spotreba_tuv) * (cena_gj_czt * 3.6)
         naklady_tc = (el_tc_s + el_biv_s) * cena_el + 17000
         uspora = naklady_czt - naklady_tc
-        navratnost = investice / uspora if uspora > 0 else 0
 
-        # --- ZOBRAZENÍ ---
-        tab1, tab2, tab3 = st.tabs(["💰 Ekonomika", "📈 Bilance a Grafy", "📅 Měsíční přehled"])
+        # --- ZOBRAZENÍ GRAFŮ DLE NÁVRHU ---
+        st.header(f"📊 Výsledky analýzy: {nazev_projektu}")
+        tab1, tab2 = st.tabs(["📉 Výkonová a Energetická bilance", "💰 Ekonomika a export"])
         
         with tab1:
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Roční úspora", f"{uspora:,.0f} Kč")
-            c2.metric("Návratnost", f"{navratnost:.1f} let")
-            c3.metric("SCOP systému", f"{q_tc_s / el_tc_s:.2f}")
-            c4.metric("Bod bivalence", f"{df_sim[df_sim['Q_biv'] > 0.1]['Temp'].max() if q_biv_s > 0 else -20:.1f} °C")
+            col_a, col_b = st.columns(2)
             
-            st.markdown("---")
-            col_l, col_r = st.columns(2)
-            with col_l:
-                st.subheader("Podíl spotřebované elektřiny")
-                fig_pie, ax_pie = plt.subplots(figsize=(6,4))
-                ax_pie.pie([el_tc_s, el_biv_s], labels=['TČ (Kompresor)', 'Bivalence (Patrona)'], 
-                           autopct='%1.1f%%', colors=['#3498db','#e74c3c'], startangle=90)
-                st.pyplot(fig_pie)
-                st.caption("Pozn: Bivalence spotřebuje více elektřiny na 1 kWh tepla než TČ (COP 1 vs 3.5).")
+            with col_a:
+                st.subheader("1. Výkonová rovnováha (kW)")
+                tx = np.linspace(df_sim['Temp'].min(), 20, 50)
+                qy = [max(0, (ztrata * (20 - t) / (20 - t_design) * k_oprava)) + q_tuv_avg for t in tx]
+                py = []
+                for t in tx:
+                    tv = np.interp(t, [t_design, 15], [t_voda_max, t_voda_min]) if t < 20 else t_voda_min
+                    kp = 1 - (max(0, tv - 35.0) * 0.01)
+                    py.append(np.interp(t, df_char['Teplota'], df_char['Vykon_kW']) * pocet_tc * kp)
+
+                fig1, ax1 = plt.subplots()
+                ax1.plot(tx, qy, 'r-', label='Potřeba objektu', linewidth=2)
+                ax1.plot(tx, py, 'b--', label='Výkon kaskády TČ', linewidth=2)
+                ax1.set_xlabel("Venkovní teplota [°C]")
+                ax1.set_ylabel("Výkon [kW]")
+                ax1.grid(True, alpha=0.3)
+                ax1.legend()
+                st.pyplot(fig1)
+
+            with col_b:
+                st.subheader("2. Energetické pokrytí (MWh)")
+                # Seskupení energie podle teplotních stupňů
+                df_binned = df_sim.groupby('Temp').agg({'Q_tc':'sum', 'Q_biv':'sum'}).reset_index()
+                df_binned[['Q_tc', 'Q_biv']] /= 1000 # převod na MWh
+                
+                fig2, ax2 = plt.subplots()
+                ax2.bar(df_binned['Temp'], df_binned['Q_tc'], color='#3498db', label='Energie z TČ')
+                ax2.bar(df_binned['Temp'], df_binned['Q_biv'], bottom=df_binned['Q_tc'], color='#e74c3c', label='Energie z bivalence')
+                ax2.set_xlabel("Venkovní teplota [°C]")
+                ax2.set_ylabel("Energie [MWh]")
+                ax2.legend()
+                st.pyplot(fig2)
+            
+            st.info(f"**Bod bivalence:** {df_sim[df_sim['Q_biv'] > 0.1]['Temp'].max() if q_biv_s > 0 else 'Neselektivní' } °C")
 
         with tab2:
-            st.subheader("Výkonová rovnováha kaskády")
-            # GENERUJEME ČISTÝ GRAF DLE TEPLOTY (NE HODIN)
-            tx = np.linspace(-15, 20, 100)
-            qy = [max(0, (ztrata * (20 - t) / (20 - t_design) * k_oprava)) + q_tuv_avg for t in tx]
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Roční úspora", f"{uspora:,.0f} Kč")
+            c2.metric("Návratnost", f"{investice/uspora:.1f} let" if uspora > 0 else "N/A")
+            c3.metric("SCOP systému", f"{q_tc_s / el_tc_s:.2f}")
             
-            # Korekce výkonu pro graf (přibližná ekvitermní korekce pro vizualizaci)
-            py = []
-            for t in tx:
-                tv = np.interp(t, [t_design, 15], [t_voda_max, t_voda_min]) if t < 20 else t_voda_min
-                kp = 1 - (max(0, tv - 35.0) * 0.01)
-                p_base = np.interp(t, df_char['Teplota'], df_char['Vykon_kW']) * pocet_tc
-                py.append(p_base * kp)
-
-            fig1, ax1 = plt.subplots(figsize=(10, 5))
-            ax1.plot(tx, qy, 'r-', label='Potřeba domu + TUV [kW]', linewidth=2)
-            ax1.plot(tx, py, 'b--', label=f'Maximální výkon kaskády ({pocet_tc}ks TČ) [kW]', linewidth=2)
+            st.markdown("---")
+            st.subheader("Podíl bivalence na spotřebě elektřiny")
+            fig_pie, ax_pie = plt.subplots(figsize=(4,3))
+            ax_pie.pie([el_tc_s, el_biv_s], labels=['TČ', 'Biv'], autopct='%1.1f%%', colors=['#3498db','#e74c3c'], startangle=90)
+            st.pyplot(fig_pie)
             
-            # Vybarvení bivalence (tam kde je potřeba > výkon)
-            ax1.fill_between(tx, py, qy, where=(np.array(qy) > np.array(py)), color='red', alpha=0.2, label='Oblast bivalence')
-            
-            ax1.set_xlabel("Venkovní teplota [°C]")
-            ax1.set_ylabel("Výkon [kW]")
-            ax1.set_ylim(0, max(qy)*1.2)
-            ax1.grid(True, alpha=0.3)
-            ax1.legend()
-            st.pyplot(fig1)
-
-        with tab3:
-            df_sim['Month'] = (df_sim.index // (24 * 30.5)).astype(int) + 1
-            df_sim['Month'] = df_sim['Month'].clip(1, 12)
-            mes_df = df_sim.groupby('Month').agg({'Q_tc': 'sum', 'Q_biv': 'sum', 'El_tc': 'sum', 'El_biv': 'sum'}).reset_index()
-            for c in ['Q_tc', 'Q_biv', 'El_tc', 'El_biv']: mes_df[c] /= 1000
-            st.dataframe(mes_df.style.format(precision=2), use_container_width=True)
-
-        st.download_button("📥 Stáhnout Excel", io.BytesIO().getvalue(), "simulace.xlsx")
+            buf = io.BytesIO()
+            df_sim.to_excel(buf, index=False)
+            st.download_button("📥 Stáhnout kompletní výpočet (Excel)", buf.getvalue(), "analyza_tc.xlsx")
 else:
-    st.info("Nahrajte soubory TMY a vstupy_TC.csv.")
+    st.info("Nahrajte CSV soubory pro zobrazení grafů.")
