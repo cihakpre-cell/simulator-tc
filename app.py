@@ -25,7 +25,7 @@ def load_char(file):
     except: return None
 
 # --- KONFIGURACE ---
-st.set_page_config(page_title="Expertní simulátor TČ", layout="wide")
+st.set_page_config(page_title="Expertní simulátor TČ v2.0", layout="wide")
 
 with st.sidebar:
     st.header("⚙️ Konfigurace projektu")
@@ -38,13 +38,20 @@ with st.sidebar:
         spotreba_ut = st.number_input("Spotřeba ÚT [MWh/rok]", value=124.0)
         spotreba_tuv = st.number_input("Spotřeba TUV [MWh/rok]", value=76.0)
 
-    with st.expander("🔧 Technologie", expanded=True):
+    with st.expander("🔧 Technologie a Teploty", expanded=True):
         pocet_tc = st.slider("Počet TČ v kaskádě", 1, 10, 3)
         eta_biv = st.slider("Účinnost bivalence [%]", 80, 100, 98) / 100
 
+    with st.expander("💰 Ekonomika", expanded=True):
+        investice = st.number_input("Investice celkem [Kč]", value=3800000)
+        cena_el = st.number_input("Cena elektřiny [Kč/MWh]", value=4800)
+        cena_gj_czt = st.number_input("Cena CZT [Kč/GJ]", value=1284)
+
 # --- VÝPOČETNÍ JÁDRO ---
-tmy_file = st.file_uploader("1. Nahrajte TMY (CSV)", type="csv")
-char_file = st.file_uploader("2. Nahrajte Charakteristiku TČ (CSV)", type="csv")
+st.subheader("📁 Datové podklady")
+c1, c2 = st.columns(2)
+with c1: tmy_file = st.file_uploader("1. Nahrajte TMY (CSV)", type="csv")
+with c2: char_file = st.file_uploader("2. Nahrajte Charakteristiku TČ (CSV)", type="csv")
 
 if tmy_file and char_file:
     tmy = load_tmy_robust(tmy_file)
@@ -75,63 +82,71 @@ if tmy_file and char_file:
 
         df_sim = pd.DataFrame(res, columns=['Temp', 'Q_need', 'Q_tc', 'Q_biv', 'El_tc', 'El_biv'])
         
-        # Bod bivalence pro grafy
+        # Bod bivalence
         t_biv = -12.0
         for t in np.linspace(15, -15, 500):
-            q_req = (ztrata * (t_vnitrni - t) / (t_vnitrni - t_design) * k_oprava) + q_tuv_avg
-            if (np.interp(t, df_char[t_col], df_char[v_col]) * pocet_tc) < q_req:
+            if (np.interp(t, df_char[t_col], df_char[v_col]) * pocet_tc) < (ztrata * (t_vnitrni - t) / (t_vnitrni - t_design) * k_oprava + q_tuv_avg):
                 t_biv = t
                 break
 
-        # --- GRAFICKÝ VÝSTUP 2x2 ---
-        fig = plt.figure(figsize=(18, 14))
-
-        # 1. DYNAMIKA PROVOZU (Vlevo nahoře - FIXNÍ)
-        ax1 = plt.subplot(2, 2, 1)
+        # --- VÝSTUPNÍ GRAFY ---
+        st.header(f"📈 Analýza: {nazev_projektu}")
+        
+        # Horní řada (1 a 2)
+        fig1, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 6))
+        
+        # 1. Dynamika (Modulace)
         tr = np.linspace(-15, 18, 100)
         q_p = [(ztrata * (t_vnitrni - t) / (t_vnitrni - t_design) * k_oprava) + q_tuv_avg for t in tr]
         p_p = [np.interp(t, df_char[t_col], df_char[v_col]) * pocet_tc for t in tr]
-        ax1.plot(tr, q_p, 'r-', lw=2, label='Potřeba domu (ÚT+TUV)')
-        ax1.plot(tr, p_p, 'b--', lw=1, alpha=0.4, label='Max kaskáda')
-        ax1.plot(tr, [min(q,p) for q,p in zip(q_p, p_p)], 'g-', lw=5, alpha=0.5, label='Výkon TČ')
-        t_mraz = np.linspace(-15, t_biv, 50)
-        q_mraz = [(ztrata * (t_vnitrni - tx) / (t_vnitrni - t_design) * k_oprava) + q_tuv_avg for tx in t_mraz]
-        p_mraz = [np.interp(tx, df_char[t_col], df_char[v_col]) * pocet_tc for tx in t_mraz]
-        ax1.fill_between(t_mraz, p_mraz, q_mraz, color='red', alpha=0.2, hatch='\\\\\\', label='Bivalence')
+        ax1.plot(tr, q_p, 'r-', lw=2, label='Potřeba (ÚT+TUV)')
+        ax1.plot(tr, p_p, 'b--', alpha=0.4, label='Max výkon kaskády')
+        ax1.plot(tr, [min(q,p) for q,p in zip(q_p, p_p)], 'g-', lw=5, alpha=0.4, label='Skutečné krytí TČ')
         ax1.axvline(t_biv, color='k', ls=':', label=f'Bivalence {t_biv:.1f}°C')
-        ax1.set_title("DYNAMIKA PROVOZU A MODULACE", fontweight='bold')
-        ax1.set_xlabel("Venkovní teplota [°C]"); ax1.set_ylabel("Výkon [kW]")
-        ax1.legend(loc='lower right'); ax1.grid(alpha=0.2)
+        ax1.set_title("1. DYNAMIKA PROVOZU A MODULACE", fontweight='bold')
+        ax1.set_xlabel("Venkovní teplota [°C]"); ax1.set_ylabel("Výkon [kW]"); ax1.legend(); ax1.grid(alpha=0.2)
 
-        # 2. ENERGETICKÝ MIX DLE TEPLOTY (Vpravo nahoře - FIXNÍ)
-        ax2 = plt.subplot(2, 2, 2)
+        # 2. Mix dle teploty
         df_sim['Temp_R'] = df_sim['Temp'].round()
         df_t = df_sim.groupby('Temp_R')[['Q_tc', 'Q_biv']].sum().sort_index()
         ax2.bar(df_t.index, df_t['Q_tc'], color='#3498db', label='Energie TČ')
         ax2.bar(df_t.index, df_t['Q_biv'], bottom=df_t['Q_tc'], color='#e74c3c', label='Bivalence')
-        ax2.set_title("ROZDĚLENÍ ENERGIE DLE VENKOVNÍ TEPLOTY", fontweight='bold')
-        ax2.set_xlabel("Venkovní teplota [°C]"); ax2.set_ylabel("Energie [kWh]"); ax2.legend(); ax2.grid(alpha=0.1, axis='y')
+        ax2.set_title("2. ENERGETICKÝ MIX DLE VENKOVNÍ TEPLOTY", fontweight='bold')
+        ax2.set_xlabel("Teplota [°C]"); ax2.set_ylabel("Energie [kWh]"); ax2.legend(); ax2.grid(alpha=0.1, axis='y')
+        st.pyplot(fig1)
 
-        # 3. MĚSÍČNÍ ENERGIE (Vlevo dole - FIXNÍ)
-        ax3 = plt.subplot(2, 2, 3)
+        # Prostřední řada (3 a 4)
+        fig2, (ax3, ax4) = plt.subplots(1, 2, figsize=(18, 6))
+        
+        # 3. Měsíční bilance
         df_sim['Month'] = (df_sim.index // (24 * 30.5)).astype(int) + 1
-        df_sim['Month'] = df_sim['Month'].clip(1, 12)
         m_df = df_sim.groupby('Month').agg({'Q_tc': 'sum', 'Q_biv': 'sum'}).reset_index()
         ax3.bar(m_df['Month'], m_df['Q_tc']/1000, label='TČ', color='#3498db')
         ax3.bar(m_df['Month'], m_df['Q_biv']/1000, bottom=m_df['Q_tc']/1000, label='Bivalence', color='#e74c3c')
-        ax3.set_title("MĚSÍČNÍ BILANCE ENERGIE [MWh]", fontweight='bold')
-        ax3.set_xlabel("Měsíc"); ax3.set_ylabel("MWh"); ax3.legend(); ax3.grid(alpha=0.1, axis='y')
+        ax3.set_title("3. MĚSÍČNÍ BILANCE ENERGIE [MWh]", fontweight='bold')
+        ax3.set_xticks(range(1, 13)); ax3.set_ylabel("MWh"); ax3.legend(); ax3.grid(alpha=0.1, axis='y')
 
-        # 4. VÝKONOVÁ MONOTÓNA (Vpravo dole - FIXNÍ)
-        ax4 = plt.subplot(2, 2, 4)
+        # 4. Výkonová monotóna (dle výkonu)
         q_sorted = np.sort(df_sim['Q_need'].values)[::-1]
-        hours = np.arange(len(q_sorted))
         p_lim = np.interp(t_biv, df_char[t_col], df_char[v_col]) * pocet_tc
-        ax4.plot(hours, q_sorted, 'r-', lw=2, label='Potřeba')
-        ax4.fill_between(hours, p_lim, q_sorted, where=(q_sorted > p_lim), color='#e74c3c', alpha=0.4, label='Bivalence')
-        ax4.fill_between(hours, 0, np.minimum(q_sorted, p_lim), color='#3498db', alpha=0.2, label='Kryto TČ')
-        ax4.set_title("TRVÁNÍ POTŘEBY VÝKONU (MONOTONA)", fontweight='bold')
-        ax4.set_xlabel("Hodin v roce"); ax4.set_ylabel("Výkon [kW]"); ax4.set_xlim(0, 8760); ax4.grid(alpha=0.2)
+        ax4.plot(range(8760), q_sorted, 'r-', lw=2, label='Potřeba')
+        ax4.fill_between(range(8760), p_lim, q_sorted, where=(q_sorted > p_lim), color='#e74c3c', alpha=0.4, label='Bivalence')
+        ax4.fill_between(range(8760), 0, np.minimum(q_sorted, p_lim), color='#3498db', alpha=0.2, label='TČ')
+        ax4.set_title("4. TRVÁNÍ POTŘEBY VÝKONU (DLE VÝKONU)", fontweight='bold')
+        ax4.set_xlabel("Hodin v roce"); ax4.set_ylabel("Výkon [kW]"); ax4.legend(); ax4.grid(alpha=0.2)
+        st.pyplot(fig2)
 
-        plt.tight_layout(rect=[0, 0.05, 1, 0.95])
-        st.pyplot(fig)
+        # Spodní graf (5 - Nový dle vašeho kódu)
+        st.markdown("---")
+        st.subheader("5. Četnost teplot a bod bivalence v roce (Seřazeno dle teploty)")
+        df_sorted_t = df_sim.sort_values('Temp').reset_index(drop=True)
+        fig3, ax5 = plt.subplots(figsize=(18, 5))
+        ax5.plot(df_sorted_t.index, df_sorted_t['Q_need'], 'r', label='Potřeba domu (ÚT+TUV)')
+        ax5.plot(df_sorted_t.index, df_sorted_t['Q_tc'], 'b', label='Krytí TČ')
+        biv_area = df_sorted_t[df_sorted_t['Q_biv'] > 0.1].index
+        if len(biv_area) > 0:
+            ax5.fill_between(df_sorted_t.index[:max(biv_area)], df_sorted_t['Q_tc'][:max(biv_area)], 
+                             df_sorted_t['Q_need'][:max(biv_area)], color='red', alpha=0.3, label='Oblast bivalence')
+        ax5.set_ylabel("Výkon [kW]"); ax5.set_xlabel("Hodin v roce (od nejnižší po nejvyšší teplotu)")
+        ax5.legend(); ax5.grid(True, alpha=0.2)
+        st.pyplot(fig3)
