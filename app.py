@@ -1,112 +1,162 @@
+import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from google.colab import files
+import io
 
-# 1. NAČTENÍ VSTUPŮ (Vše v jednom, aby nedošlo k NameError)
-try:
-    xls = pd.ExcelFile('vstupy_TC.xlsx')
-    df_zadani = pd.read_excel(xls, 'Zadani').set_index('Parametr')
-    df_char = pd.read_excel(xls, 'Charakteristika')
+# --- 1. KONFIGURACE STRÁNKY ---
+st.set_page_config(page_title="Energetický Simulátor TČ", layout="wide")
+st.title("🚀 Energetický simulátor kaskády TČ")
+st.markdown("Propojení meteorologických dat TMY a výkonových charakteristik kaskády.")
+
+# --- 2. SIDEBAR: VSTUPNÍ PARAMETRY ---
+st.sidebar.header("⚙️ Vstupní parametry")
+with st.sidebar:
+    nazev_projektu = st.text_input("Název projektu", "SVJ Sládkovičova")
+    ztrata = st.number_input("Tepelná ztráta [kW]", value=54.0)
+    t_design = st.number_input("Návrhová teplota [°C]", value=-12.0)
+    spotreba_ut = st.number_input("Spotřeba ÚT [MWh/rok]", value=124.0)
+    spotreba_tuv = st.number_input("Spotřeba TUV [MWh/rok]", value=76.0)
     
-    # Základní parametry
-    nazev = df_zadani.loc['Nazev_Projektu', 'Hodnota']
-    ztrata_celkova = float(df_zadani.loc['Tepelna_Ztrata', 'Hodnota'])
-    t_design = float(df_zadani.loc['Navrhova_Teplota', 'Hodnota'])
-    fakt_ut = float(df_zadani.loc['Spotreba_UT_CZT', 'Hodnota'])
-    f_tuv = float(df_zadani.loc['Spotreba_TUV_CZT', 'Hodnota'])
-    cena_el_mwh = float(df_zadani.loc['Cena_Elektrina_MWh', 'Hodnota'])
-    cena_gj_czt = float(df_zadani.loc['Cena_CZT_GJ', 'Hodnota'])
-    servis = float(df_zadani.loc['Servisni_Naklady_Rok', 'Hodnota'])
+    st.markdown("---")
+    pocet_tc = st.slider("Počet TČ v kaskádě", 1, 10, 3)
+    
+    st.markdown("---")
+    cena_el = st.number_input("Cena elektřiny [Kč/MWh]", value=4800)
+    cena_gj_czt = st.number_input("Cena CZT [Kč/GJ]", value=1284)
+    investice = st.number_input("Investice celkem [Kč]", value=3800000)
 
-    # Načtení TMY
-    tmy = pd.read_csv('tmy_50.024_14.455_2005_2023.csv', skiprows=17)
-    tmy.columns = tmy.columns.str.strip()
-    tmy['T2m'] = pd.to_numeric(tmy['T2m'], errors='coerce')
-    tmy = tmy.dropna(subset=['T2m']).reset_index(drop=True)
-    tmy['T_smooth'] = tmy['T2m'].rolling(window=6, min_periods=1).mean()
+# --- 3. FUNKCE PRO ROBUSTNÍ NAČÍTÁNÍ ---
+def load_tmy_robust(file):
+    """Najde v TMY souboru řádek s T2m a načte data."""
+    try:
+        content = file.getvalue().decode('utf-8', errors='ignore').splitlines()
+        header_idx = -1
+        for i, line in enumerate(content):
+            if 'T2m' in line:
+                header_idx = i
+                break
+        if header_idx == -1: return None
+        return pd.read_csv(io.StringIO("\n".join(content[header_idx:])))
+    except:
+        return None
 
-    # Kalibrace k_oprava a TUV
-    q_tuv_avg = (f_tuv / 8760) * 1000
-    potreba_ut_teorie = [ztrata_celkova * (20 - t) / (20 - t_design) if t < 20 else 0 for t in tmy['T_smooth']]
-    k_oprava = fakt_ut / (sum(potreba_ut_teorie) / 1000)
-    naklady_czt = (fakt_ut + f_tuv) * (cena_gj_czt * 3.6)
+def load_char(file):
+    """Načte charakteristiku s detekcí středníku a des. čárky."""
+    try:
+        content = file.getvalue().decode('utf-8-sig', errors='ignore')
+        sep = ';' if ';' in content.split('\n')[0] else ','
+        return pd.read_csv(io.StringIO(content), sep=sep, decimal=',')
+    except:
+        return None
 
-except Exception as e:
-    print(f"Chyba při inicializaci dat: {e}")
+# --- 4. NAHRÁNÍ SOUBORŮ ---
+st.subheader("📁 Nahrání datových podkladů")
+col1, col2 = st.columns(2)
 
-# 2. FUNKCE PRO SIMULACI VARIANTY
-def analyzuj_variantu(pocet_tc, investice):
-    # Výpočet bodu bivalence
-    t_biv = -99
-    for t in np.linspace(15, -15, 500):
-        q_need = (ztrata_celkova * (20 - t) / (20 - t_design) * k_oprava) + q_tuv_avg
-        p_tc = np.interp(t, df_char['Teplota'], df_char['Vykon_kW']) * pocet_tc
-        if p_tc < q_need:
-            t_biv = t
-            break
+with col1:
+    tmy_file = st.file_uploader("1. Nahrajte TMY (soubor tmy_...)", type="csv")
+with col2:
+    char_file = st.file_uploader("2. Nahrajte Charakteristiku TČ (vstupy_TC.csv)", type="csv")
+
+if tmy_file and char_file:
+    try:
+        # Zpracování TMY
+        tmy = load_tmy_robust(tmy_file)
+        if tmy is None:
+            st.error("Chyba: V souboru TMY nebyl nalezen sloupec 'T2m'.")
+            st.stop()
+        
+        tmy.columns = tmy.columns.str.strip()
+        tmy['T2m'] = pd.to_numeric(tmy['T2m'], errors='coerce')
+        tmy = tmy.dropna(subset=['T2m']).reset_index(drop=True)
+        tmy['T_smooth'] = tmy['T2m'].rolling(window=6, min_periods=1).mean()
+
+        # Zpracování Charakteristiky
+        df_char = load_char(char_file)
+        if df_char is None:
+            st.error("Chyba: Nepodařilo se načíst soubor charakteristiky.")
+            st.stop()
             
-    # Hodinová simulace
-    res = []
-    for t_out, t_smooth in zip(tmy['T2m'], tmy['T_smooth']):
-        q_total = max(0, ztrata_celkova * (20 - t_smooth) / (20 - t_design) * k_oprava) + q_tuv_avg
-        p_max = np.interp(t_out, df_char['Teplota'], df_char['Vykon_kW']) * pocet_tc
-        cop = np.interp(t_out, df_char['Teplota'], df_char['COP'])
-        q_tc = min(q_total, p_max)
-        q_biv = q_total - q_tc
-        res.append([q_total, q_tc, q_biv, q_tc/cop if q_tc > 0 else 0, q_biv/0.98])
-    
-    df_v = pd.DataFrame(res, columns=['Q_need', 'Q_tc', 'Q_biv', 'El_tc', 'El_biv'])
-    
-    # Výsledky
-    el_mwh = (df_v['El_tc'].sum() + df_v['El_biv'].sum()) / 1000
-    naklady_tc = el_mwh * cena_el_mwh + servis
-    uspora = naklady_czt - naklady_tc
-    podil_biv = (df_v['Q_biv'].sum() / df_v['Q_need'].sum()) * 100
-    
-    return {
-        "Varianta": f"{pocet_tc}ks TČ",
-        "Investice [Kč]": investice,
-        "Bod bivalence [°C]": round(t_biv, 1),
-        "Podíl bivalence [%]": round(podil_biv, 2),
-        "Úspora [Kč/rok]": round(uspora, 0),
-        "Návratnost [let]": round(investice / uspora, 1)
-    }, df_v
+        df_char.columns = df_char.columns.str.strip()
+        t_col, v_col, c_col = 'Teplota', 'Vykon_kW', 'COP'
 
-# 3. VÝPOČET VARIANT (Zadejte reálné odhadované ceny)
-v3_data, df_res_3 = analyzuj_variantu(3, 1800000)
-v5_data, df_res_5 = analyzuj_variantu(5, 2600000)
+        # --- 5. VÝPOČET SIMULACE ---
+        q_tuv_avg = (spotreba_tuv / 8760) * 1000
+        # Teoretická potřeba pro korekční faktor
+        potreba_ut_teorie = [ztrata * (20 - t) / (20 - t_design) if t < 20 else 0 for t in tmy['T_smooth']]
+        k_oprava = spotreba_ut / (sum(potreba_ut_teorie) / 1000)
 
-df_srovnani = pd.DataFrame([v3_data, v5_data])
+        res = []
+        for t_out, t_sm in zip(tmy['T2m'], tmy['T_smooth']):
+            q_need = max(0, (ztrata * (20 - t_sm) / (20 - t_design) * k_oprava)) + q_tuv_avg
+            p_max = np.interp(t_out, df_char[t_col], df_char[v_col]) * pocet_tc
+            cop_val = np.interp(t_out, df_char[t_col], df_char[c_col])
+            
+            q_tc = min(q_need, p_max)
+            q_biv = max(0, q_need - q_tc)
+            res.append([t_out, q_need, q_tc, q_biv, q_tc/cop_val if q_tc > 0 else 0, q_biv/0.98])
 
-# 4. ZOBRAZENÍ VÝSLEDKŮ A GRAFU
-print("\n--- SROVNÁNÍ VARIANT NÁVRHU ---")
-print(df_srovnani.to_string(index=False))
+        df_sim = pd.DataFrame(res, columns=['Temp', 'Q_need_kW', 'Q_tc_kW', 'Q_biv_kW', 'El_tc_kW', 'El_biv_kW'])
 
-plt.figure(figsize=(14, 6))
+        # --- 6. EKONOMIKA A MĚSÍČNÍ BILANCE ---
+        naklady_czt = (spotreba_ut + spotreba_tuv) * (cena_gj_czt * 3.6)
+        el_tc_rok_mwh = df_sim['El_tc_kW'].sum() / 1000
+        el_biv_rok_mwh = df_sim['El_biv_kW'].sum() / 1000
+        naklady_tc = (el_tc_rok_mwh + el_biv_rok_mwh) * cena_el + 17000
+        uspora = naklady_czt - naklady_tc
+        navratnost = investice / uspora if uspora > 0 else 0
 
-# Histogram četnosti s vyznačením bivalence pro 3ks (horší případ)
-ax = plt.subplot(1, 1, 1)
-t_min_real = tmy['T2m'].min()
-bins = np.arange(np.floor(t_min_real), 20, 1)
-n, bins_h, patches = ax.hist(tmy['T2m'], bins=bins, color='skyblue', edgecolor='white', alpha=0.7, label='Četnost teplot (hodin v roce)')
+        # Měsíční tabulka
+        df_sim['Month'] = (df_sim.index // (24 * 30.5)).astype(int) + 1
+        df_sim['Month'] = df_sim['Month'].clip(1, 12)
+        mesicni_df = df_sim.groupby('Month').agg({
+            'Temp': 'mean',
+            'Q_need_kW': 'sum', 'Q_tc_kW': 'sum', 'Q_biv_kW': 'sum', 'El_tc_kW': 'sum'
+        }).reset_index()
+        
+        for col in ['Q_need_kW', 'Q_tc_kW', 'Q_biv_kW', 'El_tc_kW']:
+            mesicni_df[col] = mesicni_df[col] / 1000
+        mesicni_df.columns = ['Měsíc', 'Prům. teplota [°C]', 'Potřeba [MWh]', 'Krytí TČ [MWh]', 'Bivalence [MWh]', 'Spotřeba el. [MWh]']
 
-t_biv_3 = v3_data["Bod bivalence [°C]"]
-for i in range(len(patches)):
-    if bins_h[i] < t_biv_3:
-        patches[i].set_facecolor('#ff4444')
+        # --- 7. ZOBRAZENÍ VÝSLEDKŮ ---
+        st.header(f"📊 Výsledky analýzy: {nazev_projektu}")
+        tab1, tab2, tab3 = st.tabs(["💰 Ekonomika", "📅 Měsíční bilance", "📈 Grafy"])
 
-ax.axvline(t_biv_3, color='red', ls='--', lw=2, label=f'Bod bivalence 3ks ({t_biv_3}°C)')
-ax.set_title(f"STATISTIKA TEPLOT A ROZSAH BIVALENCE (Varianta 3ks TČ)", fontsize=14)
-ax.set_xlabel("Teplota [°C]"); ax.set_ylabel("Hodin v roce")
-ax.legend()
-plt.show()
+        with tab1:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Roční úspora", f"{uspora:,.0f} Kč")
+            c2.metric("Návratnost", f"{navratnost:.1f} let")
+            c3.metric("SCOP kaskády", f"{df_sim['Q_tc_kW'].sum() / df_sim['El_tc_kW'].sum():.2f}")
+            
+            st.markdown("---")
+            st.write(f"**Původní náklady (CZT):** {naklady_czt:,.0f} Kč")
+            st.write(f"**Nové náklady (Elektřina):** {naklady_tc:,.0f} Kč")
 
-# 5. EXPORT DO EXCELU
-with pd.ExcelWriter('Kompletni_Analyza_SVJ.xlsx') as writer:
-    df_srovnani.to_excel(writer, sheet_name='Srovnani_Variant', index=False)
-    df_res_3.to_excel(writer, sheet_name='Hodinova_Data_3ks', index=False)
-    df_res_5.to_excel(writer, sheet_name='Hodinova_Data_5ks', index=False)
+        with tab2:
+            st.dataframe(mesicni_df.style.format(precision=2), use_container_width=True)
 
-print("\nExport dokončen. Soubor 'Kompletni_Analyza_SVJ.xlsx' je připraven ke stažení.")
-files.download('Kompletni_Analyza_SVJ.xlsx')
+        with tab3:
+            fig, ax = plt.subplots(figsize=(10, 4))
+            tx = np.linspace(-15, 20, 100)
+            qy = [ztrata * (20 - t) / (20 - t_design) * k_oprava + q_tuv_avg for t in tx]
+            py = [np.interp(t, df_char[t_col], df_char[v_col]) * pocet_tc for t in tx]
+            ax.plot(tx, qy, 'r', label='Potřeba domu')
+            ax.plot(tx, py, 'b--', label='Výkon kaskády')
+            ax.fill_between(tx, [min(a,b) for a,b in zip(qy,py)], qy, color='red', alpha=0.1, label='Bivalence')
+            ax.set_xlabel("Teplota [°C]"); ax.set_ylabel("Výkon [kW]"); ax.legend(); ax.grid(True, alpha=0.3)
+            st.pyplot(fig)
+
+        # --- 8. EXPORT ---
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_sim.to_excel(writer, index=False, sheet_name='Hodinova_data')
+            mesicni_df.to_excel(writer, index=False, sheet_name='Mesicni_bilance')
+        
+        st.download_button("📥 Stáhnout kompletní Excel", output.getvalue(), f"analyza_{nazev_projektu}.xlsx")
+
+    except Exception as e:
+        st.error(f"Došlo k chybě při výpočtu: {e}")
+
+else:
+    st.info("Nahrajte prosím TMY soubor a charakteristiku TČ.")
