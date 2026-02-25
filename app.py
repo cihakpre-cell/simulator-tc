@@ -27,26 +27,41 @@ def load_char(file):
     except: return None
 
 # --- KONFIGURACE ---
-st.set_page_config(page_title="Simulator TC v4.1 - LAYOUT & DATA FIX", layout="wide")
+st.set_page_config(page_title="Simulator TC v4.2 - FULL EDIT & PDF FIX", layout="wide")
 
 with st.sidebar:
     st.header("⚙️ Konfigurace")
     nazev_projektu = st.text_input("Název projektu", "SVJ Sládkovičova")
+    nazev_tc = st.text_input("Model tepelného čerpadla", "NIBE S2125-12")
     
     with st.expander("🏠 Budova a potřeba", expanded=True):
         ztrata = st.number_input("Tepelná ztráta [kW]", value=54.0)
         t_vnitrni = st.number_input("Žádaná vnitřní teplota [°C]", value=20.0)
         t_design = st.number_input("Návrhová teplota [°C]", value=-12.0)
-        # DOPLNĚNÉ ÚDAJE
         t_spad = st.text_input("Teplotní spád soustavy [°C]", "55/45")
-        t_tuv_cíl = st.number_input("Teplota TUV [°C]", value=55.0)
-        
+        t_tuv_cil = st.number_input("Teplota TUV [°C]", value=55.0)
         spotreba_ut = st.number_input("Spotřeba ÚT [MWh/rok]", value=124.0)
         spotreba_tuv = st.number_input("Spotřeba TUV [MWh/rok]", value=76.0)
 
-    with st.expander("🔧 Technologie", expanded=True):
+    with st.expander("🔧 Technologie & Charakteristika", expanded=True):
         pocet_tc = st.slider("Počet TČ v kaskádě", 1, 10, 4)
         eta_biv = st.slider("Účinnost bivalence [%]", 80, 100, 98) / 100
+        
+        # Nahrání a editace tabulky
+        char_file = st.file_uploader("Nahrát CSV charakteristiku", type="csv")
+        
+        # Defaultní data pokud není nahráno
+        if char_file:
+            df_char_raw = load_char(char_file)
+        else:
+            df_char_raw = pd.DataFrame({
+                "Teplota [C]": [-15, -7, 2, 7, 15],
+                "Výkon [kW]": [7.5, 9.2, 11.5, 12.0, 13.5],
+                "COP [-]": [2.1, 2.8, 3.5, 4.2, 5.1]
+            })
+        
+        st.write("Upravit charakteristiku (1 ks TČ):")
+        df_char = st.data_editor(df_char_raw, num_rows="dynamic")
 
     with st.expander("💰 Ekonomika", expanded=True):
         investice = st.number_input("Investice celkem [Kč]", value=4080000)
@@ -54,18 +69,16 @@ with st.sidebar:
         cena_gj_czt = st.number_input("Cena CZT [Kč/GJ]", value=1284)
         servis = st.number_input("Roční servis [Kč]", value=17500)
 
-# --- VÝPOČTY (FIXNÍ) ---
-tmy_file = st.file_uploader("1. Nahrajte TMY (CSV)", type="csv")
-char_file = st.file_uploader("2. Nahrajte Charakteristiku TČ (CSV)", type="csv")
+# --- VÝPOČTY ---
+tmy_file = st.file_uploader("Nahrát TMY data (venkovní teploty)", type="csv")
 
-if tmy_file and char_file:
+if tmy_file:
     tmy = load_tmy_robust(tmy_file)
-    df_char = load_char(char_file)
-
     if tmy is not None and df_char is not None:
         tmy['T2m'] = pd.to_numeric(tmy['T2m'], errors='coerce')
         tmy = tmy.dropna(subset=['T2m']).reset_index(drop=True)
         tmy['T_smooth'] = tmy['T2m'].rolling(window=6, min_periods=1).mean()
+        
         t_col, v_col, c_col = df_char.columns[0], df_char.columns[1], df_char.columns[2]
 
         q_tuv_avg = (spotreba_tuv / 8760) * 1000
@@ -107,15 +120,14 @@ if tmy_file and char_file:
             "Podíl bivalence [%]": [round(q_bv_s/(q_tc_s+q_bv_s)*100, 1), round(el_bv_s/(el_tc_s+el_bv_s)*100, 1)]
         })
 
-        # --- TEXTY VYSVĚTLIVEK ---
         expl_12 = "Graf 1 a 2: Bod bivalence určuje venkovní teplotu, pod kterou musí kaskádě TČ pomáhat bivalentní zdroj. Energetický mix ukazuje, že i v mrazech TČ kryje drtivou většinu energie."
         expl_34 = "Graf 3 a 4: Měsíční bilance ukazuje sezónní využití zdrojů. Monotóna výkonu (vpravo) vizualizuje časové rozložení potřeby tepla a jasně odděluje práci kaskády od bivalence."
         expl_5 = "Graf 5: Četnost teplot v roce seřazená od nejnižších. Znázorňuje stabilitu a schopnost kaskády TČ pokrývat potřeby budovy v reálném čase."
         expl_67 = "Graf 6 a 7: Roční podíl energie potvrzuje efektivitu kaskády. Ekonomické srovnání ukazuje přímou úsporu v provozních nákladech oproti původnímu CZT."
 
-        st.header(f"📊 Projekt: {nazev_projektu}")
+        st.header(f"📊 Projekt: {nazev_projektu} ({nazev_tc})")
 
-        # --- GRAFY (ZOBRAZENÍ V APLIKACI) ---
+        # --- GENERÁTOR GRAFŮ (FIXNÍ) ---
         fig12, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
         tr = np.linspace(-15, 18, 100)
         q_p = np.array([(ztrata * (t_vnitrni - t) / (t_vnitrni - t_design) * k_oprava) + q_tuv_avg for t in tr])
@@ -153,7 +165,6 @@ if tmy_file and char_file:
         ax5.set_title("5. ČETNOST TEPLOT V ROCE"); ax5.set_xlabel("Hodiny seřazené od nejmrazivějších"); ax5.set_ylabel("Výkon [kW]"); ax5.legend()
         st.pyplot(fig5); st.info(expl_5)
 
-        st.markdown("---")
         c_l, c_r = st.columns(2)
         with c_l:
             st.subheader("6. Bilance bivalence"); st.table(df_biv_table)
@@ -172,69 +183,61 @@ if tmy_file and char_file:
                 ax7.text(bar.get_x() + bar.get_width()/2., height + 5000, f'{int(height):,} Kč', ha='center', va='bottom', fontweight='bold')
             st.pyplot(fig7); st.info(expl_67)
 
-        # --- PDF GENERÁTOR (OPRAVA DIAKRITIKY A LAYOUTU) ---
-        def generate_pdf_v41():
+        # --- PDF GENERÁTOR (OPRAVA VŠEHO) ---
+        def generate_pdf_v42():
             pdf = FPDF()
-            # Funkce pro kódování s lepším mapováním pro standardní PDF fonty
+            # Pevné mapování pro českou diakritiku v standardních fontů FPDF
             def cz(txt):
-                if txt is None: return ""
-                return txt.encode('cp1250', errors='replace').decode('latin1')
+                if not txt: return ""
+                return str(txt).encode('cp1250', 'replace').decode('latin1')
             
-            # Strana 1: VSTUPY A SHRNUTÍ
+            # Strana 1: VSTUPY
             pdf.add_page()
             pdf.set_font("Helvetica", "B", 16)
-            pdf.cell(0, 10, cz(f"TECHNICKÝ REPORT: {nazev_projektu.upper()}"), ln=True, align="C")
+            pdf.cell(0, 10, cz(f"REPORT: {nazev_projektu.upper()}"), ln=True, align="C")
+            pdf.set_font("Helvetica", "B", 12)
+            pdf.cell(0, 10, cz(f"Model TČ: {nazev_tc}"), ln=True, align="C")
             
-            pdf.ln(5); pdf.set_font("Helvetica", "B", 11); pdf.cell(0, 8, cz("1. VSTUPNÍ PARAMETRY ZADÁNÍ"), ln=True)
+            pdf.ln(5); pdf.set_font("Helvetica", "B", 11); pdf.cell(0, 8, cz("1. VSTUPNÍ PARAMETRY"), ln=True)
             pdf.set_font("Helvetica", "", 10)
-            pdf.cell(0, 6, cz(f"- Tepelná ztráta objektu: {ztrata} kW"), ln=True)
-            pdf.cell(0, 6, cz(f"- Návrhová venkovní teplota: {t_design} °C (Žádaná vnitřní: {t_vnitrni} °C)"), ln=True)
-            # DOPLNĚNÉ DO PDF
-            pdf.cell(0, 6, cz(f"- Teplotní spád otopné soustavy: {t_spad} °C"), ln=True)
-            pdf.cell(0, 6, cz(f"- Cílová teplota TUV: {t_tuv_cíl} °C"), ln=True)
-            
-            pdf.cell(0, 6, cz(f"- Roční spotřeba: ÚT {spotreba_ut} MWh | TUV {spotreba_tuv} MWh"), ln=True)
-            pdf.cell(0, 6, cz(f"- Technologie: Kaskáda {pocet_tc} ks TČ"), ln=True)
-            pdf.cell(0, 6, cz(f"- Ekonomika: Cena CZT {cena_gj_czt} Kč/GJ | El. {cena_el} Kč/MWh"), ln=True)
+            pdf.cell(0, 6, cz(f"- Tepelná ztráta: {ztrata} kW | Spád: {t_spad} | TUV: {t_tuv_cil} C"), ln=True)
+            pdf.cell(0, 6, cz(f"- Spotřeba: ÚT {spotreba_ut} MWh | TUV {spotreba_tuv} MWh"), ln=True)
+            pdf.cell(0, 6, cz(f"- Technologie: Kaskáda {pocet_tc} ks TČ | Bod bivalence: {t_biv_val:.1f} C"), ln=True)
+            pdf.cell(0, 6, cz(f"- Cena CZT: {cena_gj_czt} Kč/GJ | El.: {cena_el} Kč/MWh"), ln=True)
 
-            pdf.ln(4); pdf.set_font("Helvetica", "B", 11); pdf.cell(0, 8, cz("2. VÝSLEDKY A EKONOMIKA"), ln=True)
-            pdf.set_font("Helvetica", "", 10)
-            pdf.cell(0, 6, cz(f"- Bod bivalence (vypočtený): {t_biv_val:.1f} °C"), ln=True)
-            pdf.cell(0, 6, cz(f"- Roční úspora nákladů: {uspora:,.0f} Kč | Návratnost: {navratnost:.1f} let"), ln=True)
-            
-            pdf.ln(2); pdf.set_font("Helvetica", "B", 10); pdf.cell(0, 8, cz("Tabulka bilance bivalence:"), ln=True)
-            pdf.set_font("Helvetica", "", 9)
-            pdf.cell(0, 5, cz(f"Energie (MWh): TČ {df_biv_table.iloc[0,1]} | Biv {df_biv_table.iloc[0,2]} | Podíl: {df_biv_table.iloc[0,3]} %"), ln=True)
-            pdf.cell(0, 5, cz(f"Elektřina (MWh): TČ {df_biv_table.iloc[1,1]} | Biv {df_biv_table.iloc[1,2]} | Podíl: {df_biv_table.iloc[1,3]} %"), ln=True)
+            pdf.ln(4); pdf.set_font("Helvetica", "B", 11); pdf.cell(0, 8, cz("2. HLAVNÍ VÝSLEDKY"), ln=True)
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.cell(0, 7, cz(f"ROČNÍ ÚSPORA: {uspora:,.0f} Kč"), ln=True)
+            pdf.cell(0, 7, cz(f"NÁVRATNOST: {navratnost:.1f} let"), ln=True)
             
             # GRAF 1 a 2
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f1:
-                fig12.savefig(f1.name, dpi=100); pdf.image(f1.name, x=10, y=pdf.get_y()+5, w=190)
+                fig12.savefig(f1.name, dpi=110); pdf.image(f1.name, x=10, y=pdf.get_y()+5, w=190)
             
-            # OPRAVA PŘEKRYVU: Nastavení pozice textu jasně pod obrázek (y=185 namísto 175)
+            # ABSOLUTNÍ FIX PŘEKRYVU: Vynucený skok na novou pozici
             pdf.set_xy(10, 185) 
-            pdf.set_font("Helvetica", "I", 8); pdf.multi_cell(0, 5, cz(expl_12))
+            pdf.set_font("Helvetica", "I", 9); pdf.multi_cell(0, 5, cz(expl_12))
 
-            # Strana 2: PROVOZNÍ GRAFY
+            # Strana 2: PROVOZ
             pdf.add_page()
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f2:
-                fig34.savefig(f2.name, dpi=100); pdf.image(f2.name, x=10, y=10, w=190)
-            pdf.set_xy(10, 85); pdf.set_font("Helvetica", "I", 8); pdf.multi_cell(0, 5, cz(expl_34))
+                fig34.savefig(f2.name, dpi=110); pdf.image(f2.name, x=10, y=10, w=190)
+            pdf.set_xy(10, 85); pdf.set_font("Helvetica", "I", 9); pdf.multi_cell(0, 5, cz(expl_34))
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f5:
-                fig5.savefig(f5.name, dpi=100); pdf.image(f5.name, x=10, y=100, w=190)
-            pdf.set_xy(10, 155); pdf.multi_cell(0, 5, cz(expl_5))
+                fig5.savefig(f5.name, dpi=110); pdf.image(f5.name, x=10, y=105, w=190)
+            pdf.set_xy(10, 165); pdf.multi_cell(0, 5, cz(expl_5))
 
             # Strana 3: EKONOMIKA
             pdf.add_page()
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f3:
-                fig7.savefig(f3.name, dpi=100); pdf.image(f3.name, x=10, y=10, w=90)
+                fig7.savefig(f3.name, dpi=110); pdf.image(f3.name, x=10, y=10, w=90)
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f4:
-                fig6.savefig(f4.name, dpi=100); pdf.image(f4.name, x=105, y=10, w=90)
+                fig6.savefig(f4.name, dpi=110); pdf.image(f4.name, x=105, y=10, w=90)
             pdf.set_xy(10, 105); pdf.multi_cell(0, 5, cz(expl_67))
                 
             return bytes(pdf.output())
 
         st.sidebar.markdown("---")
-        if st.sidebar.button("🚀 GENEROVAT OPRAVENÝ REPORT"):
-            st.sidebar.download_button("📥 Stáhnout PDF Report v4.1", generate_pdf_v41(), f"Report_{nazev_projektu}.pdf")
+        if st.sidebar.button("🚀 GENEROVAT PDF REPORT (v4.2)"):
+            st.sidebar.download_button("📥 Stáhnout PDF", generate_pdf_v42(), f"Report_{nazev_projektu}.pdf")
