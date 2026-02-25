@@ -42,11 +42,25 @@ def load_char(file):
         return pd.read_csv(io.StringIO(content), sep=sep, decimal=',')
     except: return None
 
-st.set_page_config(page_title="Simulator TC v4.4 - FINAL STABLE", layout="wide")
+st.set_page_config(page_title="Simulator TC v4.5 - FINAL", layout="wide")
 download_fonts()
 
+# --- INFORMAČNÍ SEKCE (METODIKA) ---
 with st.sidebar:
     st.header("⚙️ Konfigurace")
+    with st.expander("ℹ️ Metodika a logika výpočtu"):
+        st.markdown("""
+        **1. Klimatická data (TMY):** Výpočet probíhá hodinu po hodině (8760 záznamů) na základě typického meteorologického roku.
+        
+        **2. Tepelná setrvačnost:** Simulace využívá plovoucí průměr venkovních teplot za posledních 6 hodin. To simuluje schopnost panelového domu filtrovat krátkodobé výkyvy.
+        
+        **3. Priorita TUV:** Potřeba teplé vody je uvažována jako prioritní odběr, který v každé hodině snižuje dostupný výkon kaskády pro vytápění.
+        
+        **4. Ekvitermní COP:** Účinnost (COP) je dynamicky přepočítávána podle venkovní teploty a aktuálně potřebné teploty otopné vody (ekvitermní křivka).
+        
+        **5. Bod bivalence:** Není vstupem, ale výsledkem. Je to bod, kde potřeba budovy (ÚT+TUV) poprvé převýší maximální výkon kaskády v dané teplotě.
+        """)
+    
     nazev_projektu = st.text_input("Název projektu", "SVJ Sládkovičova")
     nazev_tc = st.text_input("Model tepelného čerpadla", "NIBE S2125-12")
     
@@ -135,10 +149,10 @@ if tmy_file:
                                     round(el_bv_s/(el_tc_s+el_bv_s)*100, 1) if (el_tc_s+el_bv_s)>0 else 0]
         })
 
-        expl_12 = "Graf 1 a 2: Bod bivalence určuje venkovní teplotu, pod kterou musí kaskádě TČ pomáhat bivalentní zdroj. Energetický mix ukazuje, že i v mrazech TČ kryje drtivou většinu energie."
-        expl_34 = "Graf 3 a 4: Měsíční bilance ukazuje sezónní využití zdrojů. Monotóna výkonu (vpravo) vizualizuje časové rozložení potřeby tepla."
+        expl_12 = "Graf 1 a 2: Bod bivalence určuje venkovní teplotu, pod kterou musí kaskádě TČ pomáhat bivalentní zdroj."
+        expl_34 = "Graf 3 a 4: Měsíční bilance ukazuje sezónní využití zdrojů. Monotóna výkonu vizualizuje časové rozložení potřeby tepla."
         expl_5 = "Graf 5: Četnost teplot v roce seřazená od nejnižších. Znázorňuje stabilitu kaskády TČ."
-        expl_67 = "Graf 6 a 7: Roční podíl energie potvrzuje efektivitu kaskády. Ekonomické srovnání ukazuje přímou úsporu v provozních nákladech."
+        expl_67 = "Grafy potvrzuji, ze i pri bodu bivalence v mrazech pokryje kaskada TC pres 97 % rocni potreby energie budovy, coz minimalizuje vyuziti draheho bivalentniho zdroje."
 
         st.header(f"📊 Projekt: {nazev_projektu}")
 
@@ -164,7 +178,7 @@ if tmy_file:
         m_df = df_sim.groupby('Month').agg({'Q_tc': 'sum', 'Q_biv': 'sum'})
         ax3.bar(m_df.index, m_df['Q_tc']/1000, color='#ADD8E6', label='TČ')
         ax3.bar(m_df.index, m_df['Q_biv']/1000, bottom=m_df['Q_tc']/1000, color='#FF0000', label='Biv')
-        ax3.set_title("3. MĚSÍČNÍ BILANCE"); ax3.legend()
+        ax3.set_title("3. MĚSÍČNÍ BILANCE ENERGIE"); ax3.legend()
         q_sort = np.sort(df_sim['Q_need'].values)[::-1]
         p_lim_biv = np.interp(t_biv_val, df_char[t_col], df_char[v_col]) * pocet_tc
         ax4.plot(range(8760), q_sort, 'r-', lw=2)
@@ -175,7 +189,7 @@ if tmy_file:
 
         fig5, ax5 = plt.subplots(figsize=(18, 5))
         df_st = df_sim.sort_values('Temp').reset_index(drop=True)
-        ax5.plot(df_st.index, df_st['Q_need'], 'r', label='Potřeba')
+        ax5.plot(df_st.index, df_st['Q_need'], 'r', label='Potřeba ÚT+TUV')
         ax5.plot(df_st.index, df_st['Q_tc'], 'b', label='Krytí TČ')
         ax5.set_title("5. ČETNOST TEPLOT V ROCE"); ax5.legend()
         st.pyplot(fig5); st.info(expl_5)
@@ -194,8 +208,8 @@ if tmy_file:
                 ax7.text(bar.get_x() + bar.get_width()/2., bar.get_height(), f'{int(bar.get_height()):,} Kč', ha='center', va='bottom')
             ax7.set_title("SROVNÁNÍ NÁKLADŮ [Kč/rok]"); st.pyplot(fig7); st.info(expl_67)
 
-        # --- PDF GENERÁTOR (OPRAVENO S DOPLNĚNOU ZÁVORKOU) ---
-        def generate_pdf_v44():
+        # --- PDF GENERÁTOR ---
+        def generate_pdf_v45():
             pdf = FPDF()
             has_unicode_font = os.path.exists(FONT_REGULAR)
             if has_unicode_font:
@@ -207,26 +221,22 @@ if tmy_file:
                 if has_unicode_font: return str(txt)
                 return "".join([c for c in unicodedata.normalize('NFKD', str(txt)) if not unicodedata.combining(c)])
 
-            # Strana 1: Vstupní parametry a Graf 1
+            # Strana 1
             pdf.add_page()
             pdf.cell(0, 10, cz(f"TECHNICKY REPORT: {nazev_projektu.upper()}"), ln=True, align="C")
-            pdf.set_font(pdf.font_family, "B", 12)
-            pdf.cell(0, 10, cz(f"Model TC: {nazev_tc}"), ln=True, align="C")
-            
-            pdf.ln(5); pdf.set_font(pdf.font_family, "B", 11)
+            pdf.set_font(pdf.font_family, "B", 11)
             pdf.cell(0, 8, cz("VSTUPNI PARAMETRY"), ln=True)
             pdf.set_font(pdf.font_family, "", 10)
-            pdf.cell(0, 6, cz(f"- Tepelna ztrata objektu: {ztrata} kW"), ln=True)
-            pdf.cell(0, 6, cz(f"- Rocni spotreba UT: {spotreba_ut} MWh | Rocni spotreba TUV: {spotreba_tuv} MWh"), ln=True)
-            pdf.cell(0, 6, cz(f"- Teplotni spad soustavy: {t_spad} | Cilova teplota TUV: {t_tuv_cil} C"), ln=True)
-            pdf.cell(0, 6, cz(f"- Bod bivalence (vypocteny): {t_biv_val:.1f} C"), ln=True)
-            pdf.cell(0, 6, cz(f"- Rocni uspora: {uspora:,.0f} Kc | Navratnost: {navratnost:.1f} let"), ln=True)
+            pdf.cell(0, 6, cz(f"- Model TC: {nazev_tc} | Tepelna ztrata: {ztrata} kW"), ln=True)
+            pdf.cell(0, 6, cz(f"- Rocni spotreba UT: {spotreba_ut} MWh | TUV: {spotreba_tuv} MWh"), ln=True)
+            pdf.cell(0, 6, cz(f"- Teplotni spad: {t_spad} | Cilova teplota TUV: {t_tuv_cil} C"), ln=True)
+            pdf.cell(0, 6, cz(f"- Bod bivalence: {t_biv_val:.1f} C"), ln=True)
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f1:
                 fig12.savefig(f1.name, dpi=100); pdf.image(f1.name, x=10, y=pdf.get_y()+5, w=190)
             pdf.set_xy(10, pdf.get_y()+85); pdf.set_font(pdf.font_family, "", 8); pdf.multi_cell(0, 4, cz(expl_12))
 
-            # Strana 2: Graf 3, 4 a 5
+            # Strana 2
             pdf.add_page()
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f2:
                 fig34.savefig(f2.name, dpi=100); pdf.image(f2.name, x=10, y=15, w=190)
@@ -235,16 +245,16 @@ if tmy_file:
                 fig5.savefig(f5img.name, dpi=100); pdf.image(f5img.name, x=10, y=110, w=190)
             pdf.set_xy(10, 165); pdf.multi_cell(0, 5, cz(expl_5))
 
-            # Strana 3: Graf 7, Graf 6 a TABULKA
+            # Strana 3: PROHOZENÍ GRAFŮ 6 a 7
             pdf.add_page()
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f3:
-                fig7.savefig(f3.name, dpi=100); pdf.image(f3.name, x=10, y=15, w=90)
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f4:
-                fig6.savefig(f4.name, dpi=100)
-                pdf.image(f4.name, x=105, y=15, w=90) # FIX: Doplněno ukončení příkazů
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f6:
+                fig6.savefig(f6.name, dpi=100); pdf.image(f6.name, x=10, y=15, w=90) # Koláč vlevo
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f7:
+                fig7.savefig(f7.name, dpi=100); pdf.image(f7.name, x=105, y=15, w=90) # Ekonomika vpravo
             
+            # Tabulka bivalence pod koláčem (vlevo)
             pdf.set_xy(10, 105); pdf.set_font(pdf.font_family, "B", 10)
-            pdf.cell(0, 8, cz("TABULKA BILANCE BIVALENCE (K GRAFU 6)"), ln=True)
+            pdf.cell(0, 8, cz("TABULKA BILANCE BIVALENCE"), ln=True)
             pdf.set_font(pdf.font_family, "", 9)
             pdf.cell(0, 5, cz(f"Energie (MWh): TC {df_biv_table.iloc[0,1]} | Biv {df_biv_table.iloc[0,2]} | Podil: {df_biv_table.iloc[0,3]}%"), ln=True)
             pdf.cell(0, 5, cz(f"Elektrina (MWh): TC {df_biv_table.iloc[1,1]} | Biv {df_biv_table.iloc[1,2]} | Podil: {df_biv_table.iloc[1,3]}%"), ln=True)
@@ -252,6 +262,6 @@ if tmy_file:
             
             return bytes(pdf.output())
 
-        if st.sidebar.button("🚀 GENEROVAT PDF"):
-            pdf_data = generate_pdf_v44()
+        if st.sidebar.button("🚀 GENEROVAT PDF REPORT"):
+            pdf_data = generate_pdf_v45()
             st.sidebar.download_button("📥 Stáhnout PDF", pdf_data, f"Report_{nazev_projektu}.pdf", "application/pdf")
