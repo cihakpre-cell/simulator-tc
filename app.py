@@ -3,8 +3,24 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import io
+import os
+import urllib.request
 from fpdf import FPDF
 import tempfile
+
+# --- STAŽENÍ FONTU PRO ČEŠTINU V PDF ---
+FONT_REGULAR = "DejaVuSans.ttf"
+FONT_BOLD = "DejaVuSans-Bold.ttf"
+
+def download_fonts():
+    url_reg = "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/master/ttf/DejaVuSans.ttf"
+    url_bold = "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/master/ttf/DejaVuSans-Bold.ttf"
+    if not os.path.exists(FONT_REGULAR):
+        try: urllib.request.urlretrieve(url_reg, FONT_REGULAR)
+        except: pass
+    if not os.path.exists(FONT_BOLD):
+        try: urllib.request.urlretrieve(url_bold, FONT_BOLD)
+        except: pass
 
 # --- POMOCNÉ FUNKCE ---
 def load_tmy_robust(file):
@@ -27,7 +43,8 @@ def load_char(file):
     except: return None
 
 # --- KONFIGURACE ---
-st.set_page_config(page_title="Simulator TC v4.2 - FULL EDIT & PDF FIX", layout="wide")
+st.set_page_config(page_title="Simulator TC v4.3 - FINAL CZECH & CSV", layout="wide")
+download_fonts() # Příprava fontů pro PDF
 
 with st.sidebar:
     st.header("⚙️ Konfigurace")
@@ -47,20 +64,18 @@ with st.sidebar:
         pocet_tc = st.slider("Počet TČ v kaskádě", 1, 10, 4)
         eta_biv = st.slider("Účinnost bivalence [%]", 80, 100, 98) / 100
         
-        # Nahrání a editace tabulky
-        char_file = st.file_uploader("Nahrát CSV charakteristiku", type="csv")
-        
-        # Defaultní data pokud není nahráno
+        # Nahrání CSV pro TČ
+        char_file = st.file_uploader("Nahrát CSV charakteristiku TČ", type="csv")
         if char_file:
             df_char_raw = load_char(char_file)
         else:
             df_char_raw = pd.DataFrame({
-                "Teplota [C]": [-15, -7, 2, 7, 15],
+                "Teplota [°C]": [-15, -7, 2, 7, 15],
                 "Výkon [kW]": [7.5, 9.2, 11.5, 12.0, 13.5],
                 "COP [-]": [2.1, 2.8, 3.5, 4.2, 5.1]
             })
         
-        st.write("Upravit charakteristiku (1 ks TČ):")
+        st.write("Hodnoty charakteristiky (možno editovat):")
         df_char = st.data_editor(df_char_raw, num_rows="dynamic")
 
     with st.expander("💰 Ekonomika", expanded=True):
@@ -127,7 +142,7 @@ if tmy_file:
 
         st.header(f"📊 Projekt: {nazev_projektu} ({nazev_tc})")
 
-        # --- GENERÁTOR GRAFŮ (FIXNÍ) ---
+        # --- GENERÁTOR GRAFŮ ---
         fig12, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
         tr = np.linspace(-15, 18, 100)
         q_p = np.array([(ztrata * (t_vnitrni - t) / (t_vnitrni - t_design) * k_oprava) + q_tuv_avg for t in tr])
@@ -183,61 +198,98 @@ if tmy_file:
                 ax7.text(bar.get_x() + bar.get_width()/2., height + 5000, f'{int(height):,} Kč', ha='center', va='bottom', fontweight='bold')
             st.pyplot(fig7); st.info(expl_67)
 
-        # --- PDF GENERÁTOR (OPRAVA VŠEHO) ---
-        def generate_pdf_v42():
+        # --- PDF GENERÁTOR (PLNÁ PODPORA ČEŠTINY PŘES EXTERHNÍ FONT) ---
+        def generate_pdf_v43():
             pdf = FPDF()
-            # Pevné mapování pro českou diakritiku v standardních fontů FPDF
-            def cz(txt):
-                if not txt: return ""
-                return str(txt).encode('cp1250', 'replace').decode('latin1')
             
-            # Strana 1: VSTUPY
+            # Zkusíme načíst stažené fonty, pokud selže, použijeme defaultní a ořežeme diakritiku
+            has_unicode_font = os.path.exists(FONT_REGULAR) and os.path.exists(FONT_BOLD)
+            if has_unicode_font:
+                pdf.add_font("DejaVu", "", FONT_REGULAR)
+                pdf.add_font("DejaVu", "B", FONT_BOLD)
+            
+            def safe_txt(txt):
+                if has_unicode_font: return str(txt)
+                # Fallback, pokud se font nestáhne (odstraní diakritiku)
+                return "".join([c for c in unicodedata.normalize('NFKD', str(txt)) if not unicodedata.combining(c)])
+
             pdf.add_page()
-            pdf.set_font("Helvetica", "B", 16)
-            pdf.cell(0, 10, cz(f"REPORT: {nazev_projektu.upper()}"), ln=True, align="C")
-            pdf.set_font("Helvetica", "B", 12)
-            pdf.cell(0, 10, cz(f"Model TČ: {nazev_tc}"), ln=True, align="C")
             
-            pdf.ln(5); pdf.set_font("Helvetica", "B", 11); pdf.cell(0, 8, cz("1. VSTUPNÍ PARAMETRY"), ln=True)
-            pdf.set_font("Helvetica", "", 10)
-            pdf.cell(0, 6, cz(f"- Tepelná ztráta: {ztrata} kW | Spád: {t_spad} | TUV: {t_tuv_cil} C"), ln=True)
-            pdf.cell(0, 6, cz(f"- Spotřeba: ÚT {spotreba_ut} MWh | TUV {spotreba_tuv} MWh"), ln=True)
-            pdf.cell(0, 6, cz(f"- Technologie: Kaskáda {pocet_tc} ks TČ | Bod bivalence: {t_biv_val:.1f} C"), ln=True)
-            pdf.cell(0, 6, cz(f"- Cena CZT: {cena_gj_czt} Kč/GJ | El.: {cena_el} Kč/MWh"), ln=True)
+            # Hlavička
+            if has_unicode_font: pdf.set_font("DejaVu", "B", 16)
+            else: pdf.set_font("Helvetica", "B", 16)
+            pdf.cell(0, 10, safe_txt(f"TECHNICKÝ REPORT: {nazev_projektu.upper()}"), ln=True, align="C")
+            
+            if has_unicode_font: pdf.set_font("DejaVu", "B", 12)
+            else: pdf.set_font("Helvetica", "B", 12)
+            pdf.cell(0, 10, safe_txt(f"Model TČ: {nazev_tc}"), ln=True, align="C")
+            
+            # Sekce 1: Vstupy
+            pdf.ln(5); 
+            if has_unicode_font: pdf.set_font("DejaVu", "B", 11)
+            else: pdf.set_font("Helvetica", "B", 11)
+            pdf.cell(0, 8, safe_txt("1. VSTUPNÍ PARAMETRY ZADÁNÍ"), ln=True)
+            
+            if has_unicode_font: pdf.set_font("DejaVu", "", 10)
+            else: pdf.set_font("Helvetica", "", 10)
+            pdf.cell(0, 6, safe_txt(f"- Tepelná ztráta objektu: {ztrata} kW"), ln=True)
+            pdf.cell(0, 6, safe_txt(f"- Návrhová venkovní teplota: {t_design} °C (Žádaná vnitřní: {t_vnitrni} °C)"), ln=True)
+            pdf.cell(0, 6, safe_txt(f"- Teplotní spád otopné soustavy: {t_spad} °C"), ln=True)
+            pdf.cell(0, 6, safe_txt(f"- Cílová teplota TUV: {t_tuv_cil} °C"), ln=True)
+            pdf.cell(0, 6, safe_txt(f"- Roční spotřeba: ÚT {spotreba_ut} MWh | TUV {spotreba_tuv} MWh"), ln=True)
+            pdf.cell(0, 6, safe_txt(f"- Technologie: Kaskáda {pocet_tc} ks TČ"), ln=True)
+            pdf.cell(0, 6, safe_txt(f"- Ekonomika: Cena CZT {cena_gj_czt} Kč/GJ | El. {cena_el} Kč/MWh"), ln=True)
 
-            pdf.ln(4); pdf.set_font("Helvetica", "B", 11); pdf.cell(0, 8, cz("2. HLAVNÍ VÝSLEDKY"), ln=True)
-            pdf.set_font("Helvetica", "B", 10)
-            pdf.cell(0, 7, cz(f"ROČNÍ ÚSPORA: {uspora:,.0f} Kč"), ln=True)
-            pdf.cell(0, 7, cz(f"NÁVRATNOST: {navratnost:.1f} let"), ln=True)
+            # Sekce 2: Výsledky
+            pdf.ln(4)
+            if has_unicode_font: pdf.set_font("DejaVu", "B", 11)
+            else: pdf.set_font("Helvetica", "B", 11)
+            pdf.cell(0, 8, safe_txt("2. VÝSLEDKY A EKONOMIKA"), ln=True)
             
-            # GRAF 1 a 2
+            if has_unicode_font: pdf.set_font("DejaVu", "", 10)
+            else: pdf.set_font("Helvetica", "", 10)
+            pdf.cell(0, 6, safe_txt(f"- Bod bivalence (vypočtený): {t_biv_val:.1f} °C"), ln=True)
+            pdf.cell(0, 6, safe_txt(f"- Roční úspora nákladů: {uspora:,.0f} Kč | Návratnost: {navratnost:.1f} let"), ln=True)
+            
+            pdf.ln(2)
+            if has_unicode_font: pdf.set_font("DejaVu", "B", 10)
+            else: pdf.set_font("Helvetica", "B", 10)
+            pdf.cell(0, 8, safe_txt("Tabulka bilance bivalence:"), ln=True)
+            
+            if has_unicode_font: pdf.set_font("DejaVu", "", 9)
+            else: pdf.set_font("Helvetica", "", 9)
+            pdf.cell(0, 5, safe_txt(f"Energie (MWh): TČ {df_biv_table.iloc[0,1]} | Biv {df_biv_table.iloc[0,2]} | Podíl: {df_biv_table.iloc[0,3]} %"), ln=True)
+            pdf.cell(0, 5, safe_txt(f"Elektřina (MWh): TČ {df_biv_table.iloc[1,1]} | Biv {df_biv_table.iloc[1,2]} | Podíl: {df_biv_table.iloc[1,3]} %"), ln=True)
+            
+            # Obrázky a popisky (s fixním odsazením, aby nedocházelo k překryvu)
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f1:
-                fig12.savefig(f1.name, dpi=110); pdf.image(f1.name, x=10, y=pdf.get_y()+5, w=190)
+                fig12.savefig(f1.name, dpi=100); pdf.image(f1.name, x=10, y=pdf.get_y()+5, w=190)
             
-            # ABSOLUTNÍ FIX PŘEKRYVU: Vynucený skok na novou pozici
             pdf.set_xy(10, 185) 
-            pdf.set_font("Helvetica", "I", 9); pdf.multi_cell(0, 5, cz(expl_12))
+            if has_unicode_font: pdf.set_font("DejaVu", "", 8)
+            else: pdf.set_font("Helvetica", "I", 8)
+            pdf.multi_cell(0, 5, safe_txt(expl_12))
 
-            # Strana 2: PROVOZ
+            # Strana 2
             pdf.add_page()
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f2:
-                fig34.savefig(f2.name, dpi=110); pdf.image(f2.name, x=10, y=10, w=190)
-            pdf.set_xy(10, 85); pdf.set_font("Helvetica", "I", 9); pdf.multi_cell(0, 5, cz(expl_34))
+                fig34.savefig(f2.name, dpi=100); pdf.image(f2.name, x=10, y=10, w=190)
+            pdf.set_xy(10, 85); pdf.multi_cell(0, 5, safe_txt(expl_34))
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f5:
-                fig5.savefig(f5.name, dpi=110); pdf.image(f5.name, x=10, y=105, w=190)
-            pdf.set_xy(10, 165); pdf.multi_cell(0, 5, cz(expl_5))
+                fig5.savefig(f5.name, dpi=100); pdf.image(f5.name, x=10, y=100, w=190)
+            pdf.set_xy(10, 155); pdf.multi_cell(0, 5, safe_txt(expl_5))
 
-            # Strana 3: EKONOMIKA
+            # Strana 3
             pdf.add_page()
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f3:
-                fig7.savefig(f3.name, dpi=110); pdf.image(f3.name, x=10, y=10, w=90)
+                fig7.savefig(f3.name, dpi=100); pdf.image(f3.name, x=10, y=10, w=90)
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f4:
-                fig6.savefig(f4.name, dpi=110); pdf.image(f4.name, x=105, y=10, w=90)
-            pdf.set_xy(10, 105); pdf.multi_cell(0, 5, cz(expl_67))
+                fig6.savefig(f4.name, dpi=100); pdf.image(f4.name, x=105, y=10, w=90)
+            pdf.set_xy(10, 105); pdf.multi_cell(0, 5, safe_txt(expl_67))
                 
             return bytes(pdf.output())
 
         st.sidebar.markdown("---")
-        if st.sidebar.button("🚀 GENEROVAT PDF REPORT (v4.2)"):
-            st.sidebar.download_button("📥 Stáhnout PDF", generate_pdf_v42(), f"Report_{nazev_projektu}.pdf")
+        if st.sidebar.button("🚀 GENEROVAT PDF (S ČEŠTINOU)"):
+            st.sidebar.download_button("📥 Stáhnout PDF Report v4.3", generate_pdf_v43(), f"Report_{nazev_projektu}.pdf")
