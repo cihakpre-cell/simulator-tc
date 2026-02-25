@@ -8,24 +8,25 @@ import urllib.request
 from fpdf import FPDF
 import tempfile
 
-# --- AUTOMATICKÉ STAŽENÍ FONTŮ PRO ČEŠTINU ---
-# Tyto linky vedou přímo na soubory, ne na webovou stránku
+# --- KONFIGURACE CEST ---
 URL_FONT = "https://github.com/reingart/pyfpdf/raw/master/fpdf/font/DejaVuSans.ttf"
 URL_FONT_B = "https://github.com/reingart/pyfpdf/raw/master/fpdf/font/DejaVuSans-Bold.ttf"
 PATH_FONT = "DejaVuSans.ttf"
 PATH_FONT_B = "DejaVuSans-Bold.ttf"
 
 def check_fonts():
-    if not os.path.exists(PATH_FONT):
-        urllib.request.urlretrieve(URL_FONT, PATH_FONT)
-    if not os.path.exists(PATH_FONT_B):
-        urllib.request.urlretrieve(URL_FONT_B, PATH_FONT_B)
+    """Pokusí se stáhnout fonty, pokud neexistují."""
+    try:
+        if not os.path.exists(PATH_FONT):
+            urllib.request.urlretrieve(URL_FONT, PATH_FONT)
+        if not os.path.exists(PATH_FONT_B):
+            urllib.request.urlretrieve(URL_FONT_B, PATH_FONT_B)
+        return True
+    except:
+        return False
 
-st.set_page_config(page_title="Simulátor TČ v4.8", layout="wide")
-try:
-    check_fonts()
-except:
-    st.warning("Nepodařilo se stáhnout české fonty. PDF může být bez diakritiky.")
+st.set_page_config(page_title="Simulátor TČ v4.9", layout="wide")
+fonts_available = check_fonts()
 
 # --- POMOCNÉ FUNKCE ---
 def load_tmy_robust(file):
@@ -45,7 +46,7 @@ def load_char(file):
         return pd.read_csv(io.StringIO(content), sep=sep, decimal=',')
     except: return None
 
-# --- SIDEBAR (ZDE JE ZPĚT VAŠE CSV) ---
+# --- SIDEBAR (S CSV CHARAKTERISTIKOU) ---
 with st.sidebar:
     st.header("⚙️ Konfigurace")
     nazev_projektu = st.text_input("Název projektu", "SVJ Sládkovičova")
@@ -58,12 +59,11 @@ with st.sidebar:
         spotreba_ut = st.number_input("Spotřeba ÚT [MWh/rok]", value=124.0)
         spotreba_tuv = st.number_input("Spotřeba TUV [MWh/rok]", value=76.0)
 
-    with st.expander("🔧 Technologie (CSV Charakteristika)", expanded=True):
+    with st.expander("🔧 Technologie", expanded=True):
         pocet_tc = st.slider("Počet TČ", 1, 10, 4)
         eta_biv = st.number_input("Účinnost bivalence [%]", value=98) / 100
         
-        # --- ZDE JE VRÁCENA MOŽNOST VLOŽIT CSV ---
-        char_file = st.file_uploader("Nahrát CSV s výkonem TČ", type="csv")
+        char_file = st.file_uploader("Nahrát CSV charakteristiku TČ", type="csv")
         default_data = {
             "Teplota [°C]": [-15, -7, 2, 7, 15],
             "Výkon [kW]": [7.5, 9.2, 11.5, 12.0, 13.5],
@@ -92,7 +92,6 @@ if tmy_file:
             p_max = np.interp(t_out, df_char.iloc[:,0], df_char.iloc[:,1]) * pocet_tc
             cop_base = np.interp(t_out, df_char.iloc[:,0], df_char.iloc[:,2])
             
-            # Ekviterma
             t_w = 25.0 + (t_spad_max - 25.0) * ((t_vnitrni - t_out) / (t_vnitrni - t_design))
             t_w = min(t_spad_max, max(25, t_w))
             cop_ekv = cop_base * (1 + 0.025 * (t_spad_max - t_w))
@@ -103,54 +102,60 @@ if tmy_file:
 
         df_sim = pd.DataFrame(res, columns=['Teplota', 'Potreba_kW', 'Vykon_TC_kW', 'Vykon_Biv_kW', 'Prikon_TC_kW', 'Prikon_Biv_kW', 'T_Vody', 'COP_Ekv'])
 
-        # --- EXPORT PDF ---
+        # --- EXPORT PDF (OPRAVENÝ) ---
         def create_pdf():
             pdf = FPDF()
             pdf.add_page()
-            if os.path.exists(PATH_FONT):
-                pdf.add_font("DejaVu", "", PATH_FONT)
-                pdf.add_font("DejaVu", "B", PATH_FONT_B)
-                pdf.set_font("DejaVu", size=10)
-            else:
-                pdf.set_font("Helvetica", size=10)
+            
+            # Bezpečné nastavení fontu
+            font_name = "Helvetica"
+            if fonts_available:
+                try:
+                    pdf.add_font("DejaVu", "", PATH_FONT)
+                    pdf.add_font("DejaVu", "B", PATH_FONT_B)
+                    font_name = "DejaVu"
+                except: pass
 
-            pdf.set_font("DejaVu", "B", 16)
+            pdf.set_font(font_name, "B", 16)
             pdf.cell(0, 10, f"Report: {nazev_projektu}", ln=True, align='C')
-            pdf.set_font("DejaVu", "", 10)
+            
             pdf.ln(5)
+            pdf.set_font(font_name, "B", 12)
+            pdf.cell(0, 10, "Bilance bivalence (Tabulka)", ln=True)
+            
+            # Kreslení tabulky
+            pdf.set_font(font_name, "B", 10)
+            pdf.set_fill_color(230, 230, 230)
+            pdf.cell(60, 8, "Zdroj", 1, 0, 'C', True)
+            pdf.cell(60, 8, "Energie [MWh/rok]", 1, 0, 'C', True)
+            pdf.cell(60, 8, "Podil [%]", 1, 1, 'C', True)
+            
+            q_tc_m = df_sim['Vykon_TC_kW'].sum() / 1000
+            q_bi_m = df_sim['Vykon_Biv_kW'].sum() / 1000
+            total = q_tc_m + q_bi_m
+            
+            pdf.set_font(font_name, "", 10)
+            pdf.cell(60, 8, "Tepelna cerpadla", 1); pdf.cell(60, 8, f"{q_tc_m:.2f}", 1, 0, 'C'); pdf.cell(60, 8, f"{q_tc_m/total*100:.1f} %", 1, 1, 'C')
+            pdf.cell(60, 8, "Bivalence", 1); pdf.cell(60, 8, f"{q_bi_m:.2f}", 1, 0, 'C'); pdf.cell(60, 8, f"{q_bi_m/total*100:.1f} %", 1, 1, 'C')
 
-            # TABULKA BILANCE (GRAF 6)
-            pdf.set_font("DejaVu", "B", 11)
-            pdf.cell(0, 10, "Roční bilance bivalence:", ln=True)
-            pdf.set_fill_color(240, 240, 240)
-            pdf.cell(60, 8, "Zdroj", 1, 0, 'L', True)
-            pdf.cell(60, 8, "MWh / rok", 1, 0, 'C', True)
-            pdf.cell(60, 8, "Podíl", 1, 1, 'C', True)
-            
-            q_tc_mwh = df_sim['Vykon_TC_kW'].sum() / 1000
-            q_biv_mwh = df_sim['Vykon_Biv_kW'].sum() / 1000
-            total = q_tc_mwh + q_biv_mwh
-            
-            pdf.set_font("DejaVu", "", 10)
-            pdf.cell(60, 8, "Tepelná čerpadla", 1); pdf.cell(60, 8, f"{q_tc_mwh:.2f}", 1, 0, 'C'); pdf.cell(60, 8, f"{q_tc_mwh/total*100:.1f} %", 1, 1, 'C')
-            pdf.cell(60, 8, "Bivalence", 1); pdf.cell(60, 8, f"{q_biv_mwh:.2f}", 1, 0, 'C'); pdf.cell(60, 8, f"{q_biv_mwh/total*100:.1f} %", 1, 1, 'C')
-            
-            # GRAF
+            # Přidání grafu s odsazením
             pdf.ln(10)
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                 plt.figure(figsize=(8, 4))
-                plt.plot(df_sim['Teplota'], df_sim['Potreba_kW'], 'r', label='Potřeba')
+                plt.plot(df_sim['Teplota'], df_sim['Potreba_kW'], 'r', label='Potreba')
                 plt.fill_between(df_sim['Teplota'], 0, df_sim['Vykon_TC_kW'], color='blue', alpha=0.3)
+                plt.title("Dynamika provozu")
                 plt.savefig(tmp.name, dpi=100)
-                pdf.image(tmp.name, x=10, w=190)
-            
+                pdf.image(tmp.name, x=10, w=180)
+
             return pdf.output()
 
         # --- EXPORT EXCEL ---
         def create_excel():
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_sim.to_excel(writer, index=False, sheet_name='Data_8760h')
+                df_sim.to_excel(writer, index=False, sheet_name='Simulace')
+                df_char.to_excel(writer, sheet_name='Charakteristika')
             return output.getvalue()
 
         st.divider()
