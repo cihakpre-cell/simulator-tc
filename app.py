@@ -61,6 +61,9 @@ with st.sidebar:
         **5. Bod bivalence:** Není vstupem, ale výsledkem. Je to bod, kde potřeba budovy (ÚT+TUV) poprvé převýší maximální výkon kaskády v dané teplotě.
 
         **6.:** Jako vstup jsou vyžadována klimatická data danné oblasti TMY ve formátu .csv. Dále lze do sekce Technologie a Chrakteristika vložit charakteristiku TČ ve formátu .csv a nebo ji upravit v tabulce pod níže.
+
+        **7.:** Po zadání a úpravě vstupních dat v levé liště se automaticky vyhodnotí celá kaskáda. Výstup v PDF lze vygenerovat stlačením GENEROVAT PDF REPORT  a následně stažením souboru.
+        
         """)
     
     nazev_projektu = st.text_input("Název projektu", "SVJ Sládkovičova")
@@ -267,6 +270,7 @@ if tmy_file:
         if st.sidebar.button("🚀 GENEROVAT PDF REPORT"):
             pdf_data = generate_pdf_v45()
             st.sidebar.download_button("📥 Stáhnout PDF", pdf_data, f"Report_{nazev_projektu}.pdf", "application/pdf")
+
 
 
 
