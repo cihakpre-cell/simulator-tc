@@ -27,7 +27,7 @@ def load_char(file):
     except: return None
 
 # --- KONFIGURACE ---
-st.set_page_config(page_title="Simulator TC v4.0 - FINAL GOLD", layout="wide")
+st.set_page_config(page_title="Simulator TC v4.1 - LAYOUT & DATA FIX", layout="wide")
 
 with st.sidebar:
     st.header("⚙️ Konfigurace")
@@ -37,6 +37,10 @@ with st.sidebar:
         ztrata = st.number_input("Tepelná ztráta [kW]", value=54.0)
         t_vnitrni = st.number_input("Žádaná vnitřní teplota [°C]", value=20.0)
         t_design = st.number_input("Návrhová teplota [°C]", value=-12.0)
+        # DOPLNĚNÉ ÚDAJE
+        t_spad = st.text_input("Teplotní spád soustavy [°C]", "55/45")
+        t_tuv_cíl = st.number_input("Teplota TUV [°C]", value=55.0)
+        
         spotreba_ut = st.number_input("Spotřeba ÚT [MWh/rok]", value=124.0)
         spotreba_tuv = st.number_input("Spotřeba TUV [MWh/rok]", value=76.0)
 
@@ -50,7 +54,7 @@ with st.sidebar:
         cena_gj_czt = st.number_input("Cena CZT [Kč/GJ]", value=1284)
         servis = st.number_input("Roční servis [Kč]", value=17500)
 
-# --- VÝPOČTY (FIXNÍ LOGIKA) ---
+# --- VÝPOČTY (FIXNÍ) ---
 tmy_file = st.file_uploader("1. Nahrajte TMY (CSV)", type="csv")
 char_file = st.file_uploader("2. Nahrajte Charakteristiku TČ (CSV)", type="csv")
 
@@ -111,7 +115,7 @@ if tmy_file and char_file:
 
         st.header(f"📊 Projekt: {nazev_projektu}")
 
-        # --- GRAFY (Dle požadavku - beze změn) ---
+        # --- GRAFY (ZOBRAZENÍ V APLIKACI) ---
         fig12, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
         tr = np.linspace(-15, 18, 100)
         q_p = np.array([(ztrata * (t_vnitrni - t) / (t_vnitrni - t_design) * k_oprava) + q_tuv_avg for t in tr])
@@ -168,10 +172,13 @@ if tmy_file and char_file:
                 ax7.text(bar.get_x() + bar.get_width()/2., height + 5000, f'{int(height):,} Kč', ha='center', va='bottom', fontweight='bold')
             st.pyplot(fig7); st.info(expl_67)
 
-        # --- PDF GENERÁTOR (OPRAVENÝ) ---
-        def generate_pdf_v40():
+        # --- PDF GENERÁTOR (OPRAVA DIAKRITIKY A LAYOUTU) ---
+        def generate_pdf_v41():
             pdf = FPDF()
-            def cz(txt): return txt.encode('windows-1250', errors='replace').decode('latin1')
+            # Funkce pro kódování s lepším mapováním pro standardní PDF fonty
+            def cz(txt):
+                if txt is None: return ""
+                return txt.encode('cp1250', errors='replace').decode('latin1')
             
             # Strana 1: VSTUPY A SHRNUTÍ
             pdf.add_page()
@@ -181,14 +188,18 @@ if tmy_file and char_file:
             pdf.ln(5); pdf.set_font("Helvetica", "B", 11); pdf.cell(0, 8, cz("1. VSTUPNÍ PARAMETRY ZADÁNÍ"), ln=True)
             pdf.set_font("Helvetica", "", 10)
             pdf.cell(0, 6, cz(f"- Tepelná ztráta objektu: {ztrata} kW"), ln=True)
-            pdf.cell(0, 6, cz(f"- Návrhová venkovní teplota: {t_design} C (Žádaná vnitřní: {t_vnitrni} C)"), ln=True)
+            pdf.cell(0, 6, cz(f"- Návrhová venkovní teplota: {t_design} °C (Žádaná vnitřní: {t_vnitrni} °C)"), ln=True)
+            # DOPLNĚNÉ DO PDF
+            pdf.cell(0, 6, cz(f"- Teplotní spád otopné soustavy: {t_spad} °C"), ln=True)
+            pdf.cell(0, 6, cz(f"- Cílová teplota TUV: {t_tuv_cíl} °C"), ln=True)
+            
             pdf.cell(0, 6, cz(f"- Roční spotřeba: ÚT {spotreba_ut} MWh | TUV {spotreba_tuv} MWh"), ln=True)
             pdf.cell(0, 6, cz(f"- Technologie: Kaskáda {pocet_tc} ks TČ"), ln=True)
             pdf.cell(0, 6, cz(f"- Ekonomika: Cena CZT {cena_gj_czt} Kč/GJ | El. {cena_el} Kč/MWh"), ln=True)
 
             pdf.ln(4); pdf.set_font("Helvetica", "B", 11); pdf.cell(0, 8, cz("2. VÝSLEDKY A EKONOMIKA"), ln=True)
             pdf.set_font("Helvetica", "", 10)
-            pdf.cell(0, 6, cz(f"- Bod bivalence (vypočtený): {t_biv_val:.1f} C"), ln=True)
+            pdf.cell(0, 6, cz(f"- Bod bivalence (vypočtený): {t_biv_val:.1f} °C"), ln=True)
             pdf.cell(0, 6, cz(f"- Roční úspora nákladů: {uspora:,.0f} Kč | Návratnost: {navratnost:.1f} let"), ln=True)
             
             pdf.ln(2); pdf.set_font("Helvetica", "B", 10); pdf.cell(0, 8, cz("Tabulka bilance bivalence:"), ln=True)
@@ -196,9 +207,13 @@ if tmy_file and char_file:
             pdf.cell(0, 5, cz(f"Energie (MWh): TČ {df_biv_table.iloc[0,1]} | Biv {df_biv_table.iloc[0,2]} | Podíl: {df_biv_table.iloc[0,3]} %"), ln=True)
             pdf.cell(0, 5, cz(f"Elektřina (MWh): TČ {df_biv_table.iloc[1,1]} | Biv {df_biv_table.iloc[1,2]} | Podíl: {df_biv_table.iloc[1,3]} %"), ln=True)
             
+            # GRAF 1 a 2
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f1:
                 fig12.savefig(f1.name, dpi=100); pdf.image(f1.name, x=10, y=pdf.get_y()+5, w=190)
-            pdf.set_xy(10, 175); pdf.set_font("Helvetica", "I", 8); pdf.multi_cell(0, 5, cz(expl_12))
+            
+            # OPRAVA PŘEKRYVU: Nastavení pozice textu jasně pod obrázek (y=185 namísto 175)
+            pdf.set_xy(10, 185) 
+            pdf.set_font("Helvetica", "I", 8); pdf.multi_cell(0, 5, cz(expl_12))
 
             # Strana 2: PROVOZNÍ GRAFY
             pdf.add_page()
@@ -221,5 +236,5 @@ if tmy_file and char_file:
             return bytes(pdf.output())
 
         st.sidebar.markdown("---")
-        if st.sidebar.button("🚀 GENEROVAT FINÁLNÍ REPORT"):
-            st.sidebar.download_button("📥 Stáhnout PDF Report v4.0", generate_pdf_v40(), f"Report_{nazev_projektu}.pdf")
+        if st.sidebar.button("🚀 GENEROVAT OPRAVENÝ REPORT"):
+            st.sidebar.download_button("📥 Stáhnout PDF Report v4.1", generate_pdf_v41(), f"Report_{nazev_projektu}.pdf")
