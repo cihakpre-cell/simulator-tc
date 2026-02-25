@@ -152,7 +152,7 @@ if tmy_file:
         expl_12 = "Graf 1 a 2: Bod bivalence určuje venkovní teplotu, pod kterou musí kaskádě TČ pomáhat bivalentní zdroj."
         expl_34 = "Graf 3 a 4: Měsíční bilance ukazuje sezónní využití zdrojů. Monotóna výkonu vizualizuje časové rozložení potřeby tepla."
         expl_5 = "Graf 5: Četnost teplot v roce seřazená od nejnižších. Znázorňuje stabilitu kaskády TČ."
-        expl_67 = "Grafy potvrzuji, ze i pri bodu bivalence v mrazech pokryje kaskada TC pres 97 % rocni potreby energie budovy, coz minimalizuje vyuziti draheho bivalentniho zdroje."
+        expl_67 = "Graf 6 znázorňuje podíl byvalence na tepelné energii za rok, podíl na spotřebované energii je v tablce pod grafem, Graf 7 znázorňuje porovnání ročních nákladů."
 
         st.header(f"📊 Projekt: {nazev_projektu}")
 
@@ -265,3 +265,4 @@ if tmy_file:
         if st.sidebar.button("🚀 GENEROVAT PDF REPORT"):
             pdf_data = generate_pdf_v45()
             st.sidebar.download_button("📥 Stáhnout PDF", pdf_data, f"Report_{nazev_projektu}.pdf", "application/pdf")
+
