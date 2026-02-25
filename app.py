@@ -9,33 +9,32 @@ import unicodedata
 from fpdf import FPDF
 import tempfile
 
-# --- OPRAVA DIAKRITIKY A STABILITY ---
-def odstranit_diakritiku(text):
+# --- FUNKCE PRO ABSOLUTNÍ STABILITU TEXTU ---
+def bez_diakritiky(text):
+    """Odstraní české háčky a čárky pro stabilitu PDF."""
     return "".join(c for c in unicodedata.normalize('NFD', str(text)) if unicodedata.category(c) != 'Mn')
 
-def safe_pdf_text(text, fonts_ok):
-    if fonts_ok:
-        return str(text)
-    return odstranit_diakritiku(text)
-
-# Přímé linky na prověřené fonty (Google Fonts / GitHub)
+# --- DOWNLOAD FONTU S OVĚŘENÍM ---
 URL_FONT = "https://github.com/google/fonts/raw/main/ofl/robotomono/RobotoMono%5Bwght%5D.ttf"
 PATH_FONT = "RobotoMono.ttf"
 
-def download_font():
+def inicializace_fontu():
     if not os.path.exists(PATH_FONT):
         try:
-            req = urllib.request.Request(URL_FONT, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req) as response, open(PATH_FONT, 'wb') as out_file:
-                out_file.write(response.read())
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            req = urllib.request.Request(URL_FONT, headers=headers)
+            with urllib.request.urlopen(req) as response:
+                with open(PATH_FONT, 'wb') as f:
+                    f.write(response.read())
             return True
-        except: return False
+        except:
+            return False
     return True
 
-st.set_page_config(page_title="Simulátor TČ v6.0", layout="wide")
-fonts_ready = download_font()
+st.set_page_config(page_title="Simulátor TČ v7.0", layout="wide")
+font_ok = inicializace_fontu()
 
-# --- NAHRÁVÁNÍ DAT ---
+# --- POMOCNÉ FUNKCE PRO DATA ---
 def load_char(file):
     try:
         content = file.getvalue().decode('utf-8-sig', errors='ignore')
@@ -43,19 +42,18 @@ def load_char(file):
         return pd.read_csv(io.StringIO(content), sep=sep, decimal=',')
     except: return None
 
-# --- SIDEBAR KONFIGURACE ---
+# --- SIDEBAR ---
 with st.sidebar:
-    st.header("⚙️ Konfigurace projektu")
-    nazev_projektu = st.text_input("Název projektu", "SVJ Sládkovičova")
+    st.header("⚙️ Nastavení")
+    nazev_projektu = st.text_input("Název projektu", "SVJ Sladkovicova")
     
-    with st.expander("🔧 Parametry TČ a CSV", expanded=True):
-        pocet_tc = st.slider("Počet TČ v kaskádě", 1, 10, 4)
-        char_file = st.file_uploader("Nahrát CSV charakteristiku (Teplota, Výkon, COP)", type="csv")
-        
+    with st.expander("🔧 Technologie a CSV", expanded=True):
+        pocet_tc = st.slider("Počet TČ", 1, 10, 4)
+        char_file = st.file_uploader("Nahrát CSV charakteristiku", type="csv")
         default_data = {"Teplota [°C]": [-15, -7, 2, 7, 15], "Výkon [kW]": [7.5, 9.2, 11.5, 12.0, 13.5], "COP [-]": [2.1, 2.8, 3.5, 4.2, 5.1]}
         df_char = st.data_editor(load_char(char_file) if char_file else pd.DataFrame(default_data), num_rows="dynamic")
 
-    with st.expander("🏠 Budova a Spotřeba"):
+    with st.expander("🏠 Budova"):
         ztrata = st.number_input("Tepelná ztráta [kW]", value=54.0)
         t_vnitrni = st.number_input("Vnitřní teplota [°C]", value=20.0)
         t_design = st.number_input("Návrhová teplota [°C]", value=-12.0)
@@ -63,11 +61,10 @@ with st.sidebar:
         spotreba_ut = st.number_input("Spotřeba ÚT [MWh/rok]", value=124.0)
         spotreba_tuv = st.number_input("Spotřeba TUV [MWh/rok]", value=76.0)
 
-# --- VÝPOČETNÍ JÁDRO ---
-tmy_file = st.file_uploader("1. Nahrajte klimatická data (TMY CSV)", type="csv")
+# --- VÝPOČET ---
+tmy_file = st.file_uploader("1. Nahrát klimatická data (TMY CSV)", type="csv")
 
 if tmy_file:
-    # (Zjednodušený robustní loader pro TMY)
     content = tmy_file.getvalue().decode('utf-8', errors='ignore').splitlines()
     header_idx = next((i for i, line in enumerate(content) if 'T2m' in line), -1)
     
@@ -88,7 +85,6 @@ if tmy_file:
             p_max = np.interp(t_out, df_char.iloc[:,0], df_char.iloc[:,1]) * pocet_tc
             cop_base = np.interp(t_out, df_char.iloc[:,0], df_char.iloc[:,2])
             
-            # Ekviterma a COP
             t_w = 25.0 + (t_spad_max - 25.0) * ((t_vnitrni - t_out) / (t_vnitrni - t_design))
             cop_ekv = cop_base * (1 + 0.025 * (t_spad_max - min(t_spad_max, max(25, t_w))))
             
@@ -98,90 +94,70 @@ if tmy_file:
 
         df_sim = pd.DataFrame(res, columns=['Teplota', 'Potreba_kW', 'Vykon_TC_kW', 'Vykon_Biv_kW', 'Prikon_TC_kW', 'Prikon_Biv_kW'])
 
-        # --- EXPORT PDF ---
-        def create_pdf_bytes():
+        # --- GENERÁTOR PDF ---
+        def create_pdf_final():
             pdf = FPDF()
             pdf.add_page()
             
-            f_family = "Helvetica"
-            if fonts_ready:
+            # Bezpečné nastavení fontu
+            used_font = "Helvetica"
+            if font_ok:
                 try:
                     pdf.add_font("Roboto", "", PATH_FONT)
-                    f_family = "Roboto"
+                    used_font = "Roboto"
                 except: pass
-
-            # Záhlaví a parametry
-            pdf.set_font(f_family, "B", 16)
-            pdf.cell(0, 12, safe_pdf_text(f"TECHNICKÝ REPORT: {nazev_projektu}", fonts_ready), ln=True, align='C')
-            pdf.ln(5)
             
-            pdf.set_font(f_family, "B", 12)
-            pdf.cell(0, 10, safe_pdf_text("1. Energetická bilance (Tabulka 6)", fonts_ready), ln=True)
+            # Texty - pokud nemáme Roboto, musíme odstranit diakritiku, jinak PDF spadne
+            titulek = f"REPORT: {nazev_projektu}" if used_font == "Roboto" else bez_diakritiky(f"REPORT: {nazev_projektu}")
             
-            # Tabulka bilance
-            pdf.set_fill_color(240, 240, 240)
-            pdf.set_font(f_family, "B", 10)
-            pdf.cell(60, 8, safe_pdf_text("Zdroj energie", fonts_ready), 1, 0, 'L', True)
-            pdf.cell(60, 8, "MWh / rok", 1, 0, 'C', True)
-            pdf.cell(60, 8, safe_pdf_text("Podíl", fonts_ready), 1, 1, 'C', True)
+            pdf.set_font(used_font, "B", 16)
+            pdf.cell(0, 10, titulek, ln=True, align='C')
+            pdf.ln(10)
             
+            # Tabulka bilance (nahrazuje graf č. 6)
+            pdf.set_font(used_font, "B", 12)
+            pdf.cell(0, 10, bez_diakritiky("1. Tabulka bilance bivalence") if used_font != "Roboto" else "1. Tabulka bilance bivalence", ln=True)
+            
+            pdf.set_font(used_font, "", 10)
             q_tc_mwh = df_sim['Vykon_TC_kW'].sum() / 1000
             q_biv_mwh = df_sim['Vykon_Biv_kW'].sum() / 1000
             total = q_tc_mwh + q_biv_mwh
             
-            pdf.set_font(f_family, "", 10)
-            pdf.cell(60, 8, safe_pdf_text("Tepelná čerpadla", fonts_ready), 1)
-            pdf.cell(60, 8, f"{q_tc_mwh:.2f}", 1, 0, 'C')
-            pdf.cell(60, 8, f"{q_tc_mwh/total*100:.1f} %", 1, 1, 'C')
+            bilance_text = (
+                f"Energie dodana TC: {q_tc_mwh:.2f} MWh ({q_tc_mwh/total*100:.1f} %)\n"
+                f"Energie dodana bivalenci: {q_biv_mwh:.2f} MWh ({q_biv_mwh/total*100:.1f} %)\n"
+                f"Celkova rocni potreba: {total:.2f} MWh"
+            )
+            pdf.multi_cell(0, 8, bez_diakritiky(bilance_text) if used_font != "Roboto" else bilance_text, border=1)
             
-            pdf.cell(60, 8, safe_pdf_text("Bivalentní zdroj", fonts_ready), 1)
-            pdf.cell(60, 8, f"{q_biv_mwh:.2f}", 1, 0, 'C')
-            pdf.cell(60, 8, f"{q_biv_mwh/total*100:.1f} %", 1, 1, 'C')
-
-            # Odsazení pro Graf 1, aby se nepřekrýval
-            pdf.ln(15)
-            pdf.set_font(f_family, "B", 12)
-            pdf.cell(0, 10, safe_pdf_text("2. Dynamika provozu (Graf 1)", fonts_ready), ln=True)
+            # Graf s velkým odsazením
+            pdf.ln(20)
+            pdf.set_font(used_font, "B", 12)
+            pdf.cell(0, 10, "2. Graf dynamiky provozu", ln=True)
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                plt.figure(figsize=(9, 4.5))
-                plt.plot(df_sim['Teplota'], df_sim['Potreba_kW'], 'r', label='Potřeba budovy')
-                plt.fill_between(df_sim['Teplota'], 0, df_sim['Vykon_TC_kW'], color='skyblue', alpha=0.6, label='Kryto TČ')
-                plt.xlabel("Teplota [°C]"); plt.ylabel("Výkon [kW]"); plt.legend()
-                plt.grid(True, alpha=0.3)
-                plt.savefig(tmp.name, dpi=120)
-                pdf.image(tmp.name, x=10, w=185)
+                plt.figure(figsize=(10, 5))
+                plt.plot(df_sim['Teplota'], df_sim['Potreba_kW'], 'r', label='Potreba budovy')
+                plt.fill_between(df_sim['Teplota'], 0, df_sim['Vykon_TC_kW'], color='blue', alpha=0.3, label='Pokryti TC')
+                plt.grid(True)
+                plt.legend()
+                plt.savefig(tmp.name, dpi=150)
+                pdf.image(tmp.name, x=10, w=180)
             
-            # Musíme vrátit BYTES, ne bytearray!
             return bytes(pdf.output())
 
-        # --- EXPORT EXCEL ---
-        def create_excel_bytes():
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_sim.to_excel(writer, index=False, sheet_name='Hodinova_simulace')
-                df_char.to_excel(writer, index=False, sheet_name='Charakteristika_TC')
-                # Přidání parametrů
-                pd.DataFrame({"Vlastnost": ["Ztráta [kW]", "T design [°C]", "Počet TČ"], "Hodnota": [ztrata, t_design, pocet_tc]}).to_excel(writer, sheet_name='Parametry')
-            return output.getvalue()
-
+        # --- EXPORTY ---
         st.divider()
-        st.subheader("📥 Exporty výsledků")
         c1, c2 = st.columns(2)
         
-        # Klíčová oprava: Funkce voláme přímo uvnitř download_button a výsledek je v bytes
-        c1.download_button(
-            label="📂 Stáhnout PDF Report (v6.0)",
-            data=create_pdf_bytes(),
-            file_name=f"Report_{nazev_projektu}.pdf",
-            mime="application/pdf"
-        )
+        with c1:
+            st.download_button("📥 Stáhnout PDF Report", data=create_pdf_final(), file_name="Report.pdf", mime="application/pdf")
         
-        c2.download_button(
-            label="📊 Stáhnout Excel (8760 h)",
-            data=create_excel_bytes(),
-            file_name=f"Data_{nazev_projektu}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        
-        st.success("Simulace proběhla. Exporty jsou připraveny výše.")
+        with c2:
+            excel_data = io.BytesIO()
+            with pd.ExcelWriter(excel_data, engine='xlsxwriter') as writer:
+                df_sim.to_excel(writer, index=False, sheet_name='Simulace')
+                df_char.to_excel(writer, index=False, sheet_name='Charakteristika')
+            st.download_button("📊 Stáhnout Excel (8760 h)", data=excel_data.getvalue(), file_name="Vypocet.xlsx")
+
+        st.success("Vypocteno. Tabulka bilance a grafy jsou pripraveny v PDF.")
