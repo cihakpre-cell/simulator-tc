@@ -42,7 +42,7 @@ def load_char(file):
         return pd.read_csv(io.StringIO(content), sep=sep, decimal=',')
     except: return None
 
-st.set_page_config(page_title="Simulator TC v4.4 - FINAL FIX", layout="wide")
+st.set_page_config(page_title="Simulator TC v4.4 - FINAL STABLE", layout="wide")
 download_fonts()
 
 with st.sidebar:
@@ -152,6 +152,7 @@ if tmy_file:
         ax1.fill_between(tr, p_p, q_p, where=(q_p > p_p), color='red', alpha=0.2, hatch='XXXX', label='Oblast bivalence')
         ax1.axvline(t_biv_val, color='black', linestyle=':', lw=2, label=f'Bod bivalence: {t_biv_val:.1f}°C')
         ax1.set_title("1. DYNAMIKA PROVOZU"); ax1.legend()
+        df_sim['Temp_R'] = df_sim['Temp'].round()
         df_t = df_sim.groupby('Temp_R')[['Q_tc', 'Q_biv']].sum()
         ax2.bar(df_t.index, df_t['Q_tc'], color='#3498db', label='TČ')
         ax2.bar(df_t.index, df_t['Q_biv'], bottom=df_t['Q_tc'], color='#e74c3c', label='Biv')
@@ -159,6 +160,7 @@ if tmy_file:
         st.pyplot(fig12); st.info(expl_12)
 
         fig34, (ax3, ax4) = plt.subplots(1, 2, figsize=(18, 7))
+        df_sim['Month'] = (df_sim.index // (24 * 30.5)).astype(int) + 1
         m_df = df_sim.groupby('Month').agg({'Q_tc': 'sum', 'Q_biv': 'sum'})
         ax3.bar(m_df.index, m_df['Q_tc']/1000, color='#ADD8E6', label='TČ')
         ax3.bar(m_df.index, m_df['Q_biv']/1000, bottom=m_df['Q_tc']/1000, color='#FF0000', label='Biv')
@@ -192,7 +194,7 @@ if tmy_file:
                 ax7.text(bar.get_x() + bar.get_width()/2., bar.get_height(), f'{int(bar.get_height()):,} Kč', ha='center', va='bottom')
             ax7.set_title("SROVNÁNÍ NÁKLADŮ [Kč/rok]"); st.pyplot(fig7); st.info(expl_67)
 
-        # --- PDF GENERÁTOR (OPRAVENO DLE POSLEDNÍCH PŘIPOMÍNEK) ---
+        # --- PDF GENERÁTOR (OPRAVENO S DOPLNĚNOU ZÁVORKOU) ---
         def generate_pdf_v44():
             pdf = FPDF()
             has_unicode_font = os.path.exists(FONT_REGULAR)
@@ -220,7 +222,6 @@ if tmy_file:
             pdf.cell(0, 6, cz(f"- Bod bivalence (vypocteny): {t_biv_val:.1f} C"), ln=True)
             pdf.cell(0, 6, cz(f"- Rocni uspora: {uspora:,.0f} Kc | Navratnost: {navratnost:.1f} let"), ln=True)
             
-            # Graf 1 a 2 do PDF
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f1:
                 fig12.savefig(f1.name, dpi=100); pdf.image(f1.name, x=10, y=pdf.get_y()+5, w=190)
             pdf.set_xy(10, pdf.get_y()+85); pdf.set_font(pdf.font_family, "", 8); pdf.multi_cell(0, 4, cz(expl_12))
@@ -234,9 +235,23 @@ if tmy_file:
                 fig5.savefig(f5img.name, dpi=100); pdf.image(f5img.name, x=10, y=110, w=190)
             pdf.set_xy(10, 165); pdf.multi_cell(0, 5, cz(expl_5))
 
-            # Strana 3: Graf 7, Graf 6 a TABULKA BIVALENCE
+            # Strana 3: Graf 7, Graf 6 a TABULKA
             pdf.add_page()
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f3:
                 fig7.savefig(f3.name, dpi=100); pdf.image(f3.name, x=10, y=15, w=90)
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f4:
-                fig6.savefig(f4.name, dpi=100); pdf.image(f4.name, x=105,
+                fig6.savefig(f4.name, dpi=100)
+                pdf.image(f4.name, x=105, y=15, w=90) # FIX: Doplněno ukončení příkazů
+            
+            pdf.set_xy(10, 105); pdf.set_font(pdf.font_family, "B", 10)
+            pdf.cell(0, 8, cz("TABULKA BILANCE BIVALENCE (K GRAFU 6)"), ln=True)
+            pdf.set_font(pdf.font_family, "", 9)
+            pdf.cell(0, 5, cz(f"Energie (MWh): TC {df_biv_table.iloc[0,1]} | Biv {df_biv_table.iloc[0,2]} | Podil: {df_biv_table.iloc[0,3]}%"), ln=True)
+            pdf.cell(0, 5, cz(f"Elektrina (MWh): TC {df_biv_table.iloc[1,1]} | Biv {df_biv_table.iloc[1,2]} | Podil: {df_biv_table.iloc[1,3]}%"), ln=True)
+            pdf.ln(5); pdf.set_font(pdf.font_family, "", 8); pdf.multi_cell(0, 5, cz(expl_67))
+            
+            return bytes(pdf.output())
+
+        if st.sidebar.button("🚀 GENEROVAT PDF"):
+            pdf_data = generate_pdf_v44()
+            st.sidebar.download_button("📥 Stáhnout PDF", pdf_data, f"Report_{nazev_projektu}.pdf", "application/pdf")
