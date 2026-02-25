@@ -4,4 +4,5 @@ numpy
 matplotlib
 openpyxl
 fpdf2
+xlsxwriter
 
