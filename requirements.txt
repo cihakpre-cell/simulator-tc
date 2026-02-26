@@ -5,4 +5,8 @@ matplotlib
 openpyxl
 fpdf2
 xlsxwriter
+requests
+geopy
+folium
+streamlit-folium
 
