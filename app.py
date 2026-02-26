@@ -198,7 +198,7 @@ if st.session_state.tmy_df is not None and df_char is not None:
     expl_12 = "Graf 1 a 2: Bod bivalence určuje venkovní teplotu, pod kterou musí kaskádě TČ pomáhat bivalentní zdroj."
     expl_34 = "Graf 3 a 4: Měsíční bilance ukazuje sezónní využití zdrojů. Monotóna výkonu vizualizuje časové rozložení potřeby tepla."
     expl_5 = "Graf 5: Serazena cetnost hodinovych teplot v roce. Krivka kryti TC kopiruje potrebu budovy az do bodu bivalence. Vizualizace potvrzuje, ze extremni mrazy tvori v celorocnim fondu jen zlomek provozu, coz doklada stabilitu kaskady."
-    expl_67 = "Graf 6 znázorňuje podíl bivalence na tepelné energii za rok, podíl na spotřebované energii je v tablce pod grafem, Graf 7 znázorňuje porovnání ročních nákladů."
+    expl_67 = "Graf 6 znázorňuje podíl bivalence na tepelné energii za rok, podíl na spotřebované energii je v tabulce pod grafem, Graf 7 znázorňuje porovnání ročních nákladů."
 
     st.markdown("---")
     st.header(f"📊 Výsledky projektu: {nazev_projektu}")
@@ -290,3 +290,4 @@ if st.session_state.tmy_df is not None and df_char is not None:
     if st.sidebar.button("🚀 GENEROVAT PDF REPORT"):
         pdf_data = generate_pdf_v47()
         st.sidebar.download_button("📥 Stáhnout PDF", pdf_data, f"Report_{nazev_projektu}.pdf", "application/pdf")
+
