@@ -248,7 +248,7 @@ if st.session_state.tmy_df is not None and df_char is not None:
         pdf.set_font(pdf.font_family, "B", 11); pdf.cell(0, 8, cz("VSTUPNÍ PARAMETRY"), ln=True); pdf.set_font(pdf.font_family, "", 10)
         pdf.cell(0, 6, cz(f"- Lokalita: {st.session_state.lat:.4f}, {st.session_state.lon:.4f}"), ln=True)
         pdf.cell(0, 6, cz(f"- Zdroj klimatických dat: {st.session_state.tmy_source_label}"), ln=True)
-        pdf.cell(0, 6, cz(f"- Model TČ: {nazev_tc} | Počet v kaskádě: {pocet_tc} | Ztráta: {ztrata} kW"), ln=True)
+        pdf.cell(0, 6, cz(f"- Model TČ: {nazev_tc} | Počet v kaskádě: {pocet_tc} | Tepelná ztráta budovy: {ztrata} kW"), ln=True)
         pdf.cell(0, 6, cz(f"- Roční spotřeba ÚT: {spotreba_ut} MWh | TUV: {spotreba_tuv} MWh"), ln=True)
         pdf.cell(0, 6, cz(f"- Teplotní spád: {t_spad} | Bod bivalence: {t_biv_val:.1f} °C"), ln=True)
         
@@ -288,3 +288,4 @@ if st.session_state.tmy_df is not None and df_char is not None:
     if st.sidebar.button("🚀 GENEROVAT PDF REPORT"):
         pdf_data = generate_pdf_v49()
         st.sidebar.download_button("📥 Stáhnout PDF", pdf_data, f"Report_{nazev_projektu}.pdf", "application/pdf")
+
