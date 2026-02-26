@@ -49,7 +49,7 @@ def load_char(file):
         return pd.read_csv(io.StringIO(content), sep=sep, decimal=',')
     except: return None
 
-st.set_page_config(page_title="Simulator TC v5.8 - Final Fix", layout="wide")
+st.set_page_config(page_title="Simulator TC v5.9 - Final", layout="wide")
 download_fonts()
 
 if "lat" not in st.session_state: st.session_state.lat = 49.8175
@@ -100,7 +100,7 @@ c1, c2 = st.columns([1, 2])
 with c1:
     adresa = st.text_input("Lokalita (vyhledat):")
     if adresa and st.button("Hledat"):
-        loc = Nominatim(user_agent="tc_sim_v58").geocode(adresa)
+        loc = Nominatim(user_agent="tc_sim_final_fix").geocode(adresa)
         if loc: st.session_state.lat, st.session_state.lon = loc.latitude, loc.longitude
     st.write(f"📍 **Souřadnice:** {st.session_state.lat:.4f}, {st.session_state.lon:.4f}")
     if st.button("⬇️ STÁHNOUT TMY DATA", type="primary"):
@@ -111,7 +111,7 @@ with c1:
 with c2:
     m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=8)
     folium.Marker([st.session_state.lat, st.session_state.lon]).add_to(m)
-    out = st_folium(m, height=250, width=600, key="mapa_final")
+    out = st_folium(m, height=250, width=600, key="mapa_v59")
     if out and out.get("last_clicked"):
         if out["last_clicked"]["lat"] != st.session_state.lat:
             st.session_state.lat, st.session_state.lon = out["last_clicked"]["lat"], out["last_clicked"]["lng"]
@@ -160,7 +160,7 @@ if st.session_state.tmy_df is not None:
     q_tc_s, q_bv_s = df_sim['Q_tc'].sum()/1000, df_sim['Q_biv'].sum()/1000
     el_tc_s, el_bv_s = df_sim['El_tc'].sum()/1000, df_sim['El_biv'].sum()/1000
 
-    # --- VIZUALIZACE ---
+    # --- GRAFY ---
     st.header(f"📊 Výsledky: {nazev_projektu}")
     fig12, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
     tr = np.linspace(-15, 18, 100); q_p = np.array([max(0, (ztrata * (t_vnitrni - t) / (t_vnitrni - t_design) * k_oprava)) + q_tuv_avg for t in tr])
@@ -198,7 +198,7 @@ if st.session_state.tmy_df is not None:
         for i, v in enumerate([naklady_czt, naklady_tc]): ax7.text(i, v, f"{int(v):,} Kč", ha='center', va='bottom')
         ax7.get_yaxis().set_major_formatter(plt.FuncFormatter(lambda x, p: format(int(x), ','))); ax7.set_title("Srovnání nákladů [Kč/rok]"); st.pyplot(fig7)
 
-    ## --- PDF REPORT (VERZE v5.9 - EXTENDED) ---
+    # --- PDF REPORT GENERATOR ---
     def generate_pdf_v59():
         pdf = FPDF()
         has_u = os.path.exists(FONT_REGULAR)
@@ -213,13 +213,11 @@ if st.session_state.tmy_df is not None:
             return str(t)
         
         pdf.add_page()
-        
-        # Titulek
         pdf.set_font(pdf.font_family, "B", 16)
         pdf.cell(0, 10, cz(f"TECHNICKÝ REPORT: {nazev_projektu.upper()}"), ln=True, align="C")
         pdf.ln(5)
         
-        # OBSÁHLÁ METODIKA DLE VARIANTY
+        # METODIKA
         pdf.set_font(pdf.font_family, "B", 11)
         pdf.cell(0, 8, cz("METODIKA VÝPOČTU A LOGIKA SIMULACE"), ln=True)
         pdf.set_font(pdf.font_family, "", 9)
@@ -230,62 +228,45 @@ if st.session_state.tmy_df is not None:
             "Vypocet zohlednuje tepelnou setrvacnost budovy, dynamicke rizeni teploty otopne vody dle ekvitermy a prioritni ohrev TUV. "
             "Vysledkem je presne stanoveni bodu bivalence a realneho sezonniho COP. "
         )
-        
         if metodika_vypoctu == "Faktury":
-            metodika_text += (
-                f"\n\nSPECIFIKA VARIANTY FAKTURY: Vypocet je kalibrovan na zaklade skutecne spotreby {spotreba_ut + spotreba_tuv:.1f} MWh/rok. "
-                "Simulace zpetne dopocitava koeficienty budovy tak, aby model odpovidal realnemu provozu v danem klimatu."
-            )
+            metodika_text += f"\n\nSPECIFIKA VARIANTY FAKTURY: Vypocet je kalibrovan na zaklade skutecne spotreby {spotreba_ut + spotreba_tuv:.1f} MWh/rok."
         else:
-            metodika_text += (
-                f"\n\nSPECIFIKA VARIANTY PROJEKT: Vypocet vychazi z projektove tepelne ztraty {ztrata} kW pri navrhove teplote {t_design} C. "
-                f"Potreba TUV je modelovana pro {pocet_osob} osob dle normovych hodnot."
-            )
+            metodika_text += f"\n\nSPECIFIKA VARIANTY PROJEKT: Vypocet vychazi z projektove tepelne ztraty {ztrata} kW pri navrhove teplote {t_design} C."
             
         pdf.multi_cell(0, 5, cz(metodika_text))
         pdf.ln(5); pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(5)
         
-        # PARAMETRY A MAPA
+        # PARAMETRY A MAPKA
         pdf.set_font(pdf.font_family, "B", 11); pdf.cell(0, 8, cz("VSTUPNÍ PARAMETRY A LOKALITA"), ln=True)
         pdf.set_font(pdf.font_family, "", 10)
-        
-        y_before_map = pdf.get_y()
+        curr_y = pdf.get_y()
         pdf.cell(0, 6, cz(f"- Lokalita: {st.session_state.lat:.4f}, {st.session_state.lon:.4f}"), ln=True)
-        pdf.cell(0, 6, cz(f"- Tepelna ztrata: {ztrata} kW (pri {t_design} C)"), ln=True)
-        pdf.cell(0, 6, cz(f"- Kaskada: {pocet_tc}x {nazev_tc}"), ln=True)
+        pdf.cell(0, 6, cz(f"- TZ: {ztrata} kW | UT: {spotreba_ut:.1f} MWh | TUV: {spotreba_tuv:.1f} MWh"), ln=True)
+        pdf.cell(0, 6, cz(f"- TC: {nazev_tc} ({pocet_tc} ks)"), ln=True)
         pdf.cell(0, 6, cz(f"- Bod bivalence: {t_biv_val:.1f} C"), ln=True)
         
-        # Vložení mapy (pokud existuje)
-        try:
-            m_small = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=13, zoom_control=False)
-            folium.Marker([st.session_state.lat, st.session_state.lon]).add_to(m_small)
-            map_img_data = m_small._to_png(5) # Využití interního renderu (pokud je dostupný)
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f_map:
-                # Jelikož selenium pro mapy bývá v cloudu problém, použijeme statický náhled z grafu 1 pokud mapa selže
-                fig12.savefig(f_map.name, dpi=80) 
-                pdf.image(f_map.name, x=130, y=y_before_map, w=60)
-        except:
-            pass # Pokud mapový engine selže, PDF pokračuje bez mapy
-            
-        # GRAFY 1-2
+        # Mapka (statický náhled z grafu 1 pro stabilitu v PDF)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f_map:
+            fig12.savefig(f_map.name, dpi=80)
+            pdf.image(f_map.name, x=135, y=curr_y, w=60)
+
+        # STRANA 1 - GRAFY 1-2
         pdf.ln(10)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
             fig12.savefig(f.name, dpi=100)
             pdf.image(f.name, x=10, y=pdf.get_y(), w=190)
             
+        # STRANA 2 - GRAFY 3-5
         pdf.add_page()
-        # GRAFY 3-4
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
             fig34.savefig(f.name, dpi=100)
             pdf.image(f.name, x=10, y=15, w=190)
-        
-        # GRAF 5
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
             fig5.savefig(f.name, dpi=100)
             pdf.image(f.name, x=10, y=105, w=190)
             
+        # STRANA 3 - GRAFY 6-7 A TABULKA
         pdf.add_page()
-        # GRAFY 6-7
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
             fig6.savefig(f.name, dpi=100)
             pdf.image(f.name, x=10, y=15, w=90)
@@ -293,17 +274,19 @@ if st.session_state.tmy_df is not None:
             fig7.savefig(f.name, dpi=100)
             pdf.image(f.name, x=105, y=15, w=90)
             
-        # TABULKA BIVALENCE V REPORTU (Z GRAFU Č. 6)
         pdf.set_y(100)
         pdf.set_font(pdf.font_family, "B", 11); pdf.cell(0, 10, cz("PODROBNÁ BILANCE BIVALENCE"), ln=True)
         pdf.set_font(pdf.font_family, "B", 9)
-        
-        # Hlavička tabulky
-        pdf.cell(50, 8, cz("Metrika"), 1); pdf.cell(40, 8, cz("TČ"), 1); pdf.cell(40, 8, cz("Bivalence"), 1); pdf.cell(40, 8, cz("Podíl"), 1); pdf.ln()
-        
-        # Data tabulky
+        pdf.cell(50, 8, cz("Metrika"), 1); pdf.cell(40, 8, cz("TC"), 1); pdf.cell(40, 8, cz("Bivalence"), 1); pdf.cell(40, 8, cz("Podil"), 1); pdf.ln()
         pdf.set_font(pdf.font_family, "", 9)
         pdf.cell(50, 8, cz("Teplo [MWh]"), 1); pdf.cell(40, 8, f"{q_tc_s:.2f}", 1); pdf.cell(40, 8, f"{q_bv_s:.2f}", 1); pdf.cell(40, 8, f"{q_bv_s/(q_tc_s+q_bv_s)*100:.1f} %", 1); pdf.ln()
         pdf.cell(50, 8, cz("Elektrina [MWh]"), 1); pdf.cell(40, 8, f"{el_tc_s:.2f}", 1); pdf.cell(40, 8, f"{el_bv_s:.2f}", 1); pdf.cell(40, 8, f"{el_bv_s/(el_tc_s+el_bv_s)*100:.1f} %", 1); pdf.ln()
         
         return bytes(pdf.output())
+
+    # TLAČÍTKO V SIDEBARU
+    with st.sidebar:
+        st.markdown("---")
+        if st.button("🚀 GENEROVAT PDF REPORT", type="primary"):
+            pdf_bytes = generate_pdf_v59()
+            st.download_button("📥 Stáhnout PDF", pdf_bytes, f"Report_{nazev_projektu}.pdf")
