@@ -49,7 +49,7 @@ def load_char(file):
         return pd.read_csv(io.StringIO(content), sep=sep, decimal=',')
     except: return None
 
-st.set_page_config(page_title="Simulator TC v6.3", layout="wide")
+st.set_page_config(page_title="Simulator TC v6.4", layout="wide")
 download_fonts()
 
 if "lat" not in st.session_state: st.session_state.lat = 49.8175
@@ -60,7 +60,6 @@ if "tmy_df" not in st.session_state: st.session_state.tmy_df = None
 with st.sidebar:
     st.title("🛡️ Simulátor TČ")
     
-    # NOVÁ ČÁST: METODIKA A OBSLUHA
     with st.expander("📖 Metodika a obsluha", expanded=False):
         st.subheader("Metodika výpočtu")
         st.caption("""
@@ -73,7 +72,7 @@ with st.sidebar:
         st.caption("""
         1. **Lokalita:** Vyhledejte místo nebo klikněte do mapy.
         2. **TMY:** Stiskněte tlačítko pro stažení klimatických dat.
-        3. **Parametry:** Nastavte ztrátu budovy a parametry kaskády.
+        3. **Parametry:** Zvolte metodiku: **Faktury** (výpočet se zkalibruje podle reálné roční spotřeby z faktur) nebo **Projekt** (výpočet vychází z výpočtové tepelné ztráty budovy a počtu osob pro TUV). Nastavte ztrátu a počet strojů v kaskádě.
         4. **Charakteristika:** Můžete nahrát CSV s výkonovými daty TČ.
         5. **Report:** Po výpočtu stáhněte PDF report v dolní části.
         """)
@@ -121,7 +120,7 @@ c1, c2 = st.columns([1, 2])
 with c1:
     adresa = st.text_input("Lokalita (vyhledat):")
     if adresa and st.button("Hledat"):
-        loc = Nominatim(user_agent="tc_sim_v63").geocode(adresa)
+        loc = Nominatim(user_agent="tc_sim_v64").geocode(adresa)
         if loc: st.session_state.lat, st.session_state.lon = loc.latitude, loc.longitude
     st.write(f"📍 **Souřadnice:** {st.session_state.lat:.4f}, {st.session_state.lon:.4f}")
     if st.button("⬇️ STÁHNOUT TMY DATA", type="primary"):
@@ -132,7 +131,7 @@ with c1:
 with c2:
     m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=13)
     folium.Marker([st.session_state.lat, st.session_state.lon]).add_to(m)
-    out = st_folium(m, height=250, width=600, key="mapa_v63")
+    out = st_folium(m, height=250, width=600, key="mapa_v64")
     if out and out.get("last_clicked"):
         if out["last_clicked"]["lat"] != st.session_state.lat:
             st.session_state.lat, st.session_state.lon = out["last_clicked"]["lat"], out["last_clicked"]["lng"]
@@ -225,7 +224,7 @@ if st.session_state.tmy_df is not None:
         st.pyplot(fig7)
 
     # --- PDF GENERATOR ---
-    def generate_pdf_v63():
+    def generate_pdf_v64():
         pdf = FPDF()
         has_u = os.path.exists(FONT_REGULAR)
         if has_u: 
@@ -300,4 +299,4 @@ if st.session_state.tmy_df is not None:
     with st.sidebar:
         st.divider()
         if st.button("🚀 GENEROVAT PDF REPORT", type="primary"):
-            st.download_button("📥 Stáhnout PDF", generate_pdf_v63(), f"Report_{nazev_projektu}.pdf")
+            st.download_button("📥 Stáhnout PDF", generate_pdf_v64(), f"Report_{nazev_projektu}.pdf")
