@@ -49,11 +49,12 @@ def load_char(file):
         return pd.read_csv(io.StringIO(content), sep=sep, decimal=',')
     except: return None
 
-st.set_page_config(page_title="Simulator TC v5.4", layout="wide")
+st.set_page_config(page_title="Simulator TC v5.5 - Interactive Map", layout="wide")
 download_fonts()
 
-if "lat" not in st.session_state: st.session_state.lat = 49.8
-if "lon" not in st.session_state: st.session_state.lon = 15.5
+# Inicializace session state
+if "lat" not in st.session_state: st.session_state.lat = 49.8175
+if "lon" not in st.session_state: st.session_state.lon = 15.4730
 if "tmy_df" not in st.session_state: st.session_state.tmy_df = None
 if "tmy_source_label" not in st.session_state: st.session_state.tmy_source_label = "Nenahráno"
 
@@ -77,7 +78,7 @@ with st.sidebar:
             litry_osoba = st.number_input("l/osoba/den", value=45)
             spotreba_tuv = (pocet_osob * litry_osoba * 365 * 45 * 1.163) / 1000000
             st.write(f"Vypočtená TUV: {spotreba_tuv:.1f} MWh/rok")
-            spotreba_ut = 0 # Dopočítá se níže
+            spotreba_ut = 0 
 
     with st.expander("🔧 Technologie", expanded=True):
         pocet_tc = st.slider("Počet TČ v kaskádě", 1, 10, 4)
@@ -93,35 +94,56 @@ with st.sidebar:
         cena_gj_czt = st.number_input("Cena CZT [Kč/GJ]", value=1284)
         servis = st.number_input("Roční servis [Kč]", value=17500)
 
-# --- TMY DATA ---
+# --- TMY DATA + INTERAKTIVNÍ MAPA ---
 st.header("🌍 Zdroj klimatických dat (TMY)")
 tmy_source = st.radio("Zdroj:", ["🌍 Mapový výběr", "📂 Nahrát soubor"], horizontal=True)
+
 if tmy_source == "🌍 Mapový výběr":
     c1, c2 = st.columns([1, 2])
     with c1:
-        adresa = st.text_input("Lokalita:")
-        if st.button("Hledat"):
-            loc = Nominatim(user_agent="tc_sim").geocode(adresa)
-            if loc: st.session_state.lat, st.session_state.lon = loc.latitude, loc.longitude
-        if st.button("⬇️ STÁHNOUT TMY DATA", type="primary"):
+        adresa = st.text_input("Vyhledat místo (Enter):")
+        if adresa:
+            try:
+                loc = Nominatim(user_agent="tc_sim_v55").geocode(adresa)
+                if loc:
+                    st.session_state.lat, st.session_state.lon = loc.latitude, loc.longitude
+            except: pass
+        
+        st.write(f"📍 **Aktuální poloha:** {st.session_state.lat:.4f}, {st.session_state.lon:.4f}")
+        
+        if st.button("⬇️ STÁHNOUT TMY DATA PRO TENTO BOD", type="primary"):
             url = f"https://re.jrc.ec.europa.eu/api/tmy?lat={st.session_state.lat}&lon={st.session_state.lon}&outputformat=csv"
-            resp = requests.get(url)
-            if resp.status_code == 200:
-                st.session_state.tmy_df = load_tmy_robust(io.BytesIO(resp.content))
-                st.session_state.tmy_source_label = f"PVGIS ({st.session_state.lat:.2f})"
-    with c2:
-        m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=15)
-        folium.Marker([st.session_state.lat, st.session_state.lon]).add_to(m)
-        map_data = st_folium(m, height=250, width=600); 
-        if map_data and map_data.get("last_clicked"):
-            st.session_state.lat, st.session_state.lon = map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]
-            st.rerun()
-else:
-    tmy_file = st.file_uploader("CSV", type="csv")
-    if tmy_file: st.session_state.tmy_df = load_tmy_robust(tmy_file)
+            try:
+                resp = requests.get(url)
+                if resp.status_code == 200:
+                    st.session_state.tmy_df = load_tmy_robust(io.BytesIO(resp.content))
+                    st.session_state.tmy_source_label = f"PVGIS (Lat: {st.session_state.lat:.2f})"
+                    st.success("Data úspěšně nahrána.")
+                else: st.error("Chyba při stahování dat z PVGIS.")
+            except: st.error("Nepodařilo se spojit se serverem PVGIS.")
 
-# --- VÝPOČET ---
+    with c2:
+        m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=8)
+        folium.Marker([st.session_state.lat, st.session_state.lon], popup="Vybrané místo").add_to(m)
+        # Zachycení kliknutí
+        output = st_folium(m, height=350, width=700, key="mapa_v55")
+        
+        if output and output.get("last_clicked"):
+            new_lat = output["last_clicked"]["lat"]
+            new_lon = output["last_clicked"]["lng"]
+            if new_lat != st.session_state.lat or new_lon != st.session_state.lon:
+                st.session_state.lat = new_lat
+                st.session_state.lon = new_lon
+                st.rerun()
+else:
+    tmy_file = st.file_uploader("Nahrát CSV s TMY daty", type="csv")
+    if tmy_file: 
+        st.session_state.tmy_df = load_tmy_robust(tmy_file)
+        st.session_state.tmy_source_label = "Ručně nahraný soubor"
+
+# --- VÝPOČET A VIZUALIZACE ---
 if st.session_state.tmy_df is not None:
+    # ... (Celý výpočetní blok zůstává identický jako v v5.4 pro stabilitu)
     tmy = st.session_state.tmy_df.copy()
     tmy['T2m'] = pd.to_numeric(tmy['T2m'], errors='coerce')
     tmy = tmy.dropna(subset=['T2m']).reset_index(drop=True)
@@ -129,11 +151,13 @@ if st.session_state.tmy_df is not None:
     t_col, v_col, c_col = df_char.columns[0], df_char.columns[1], df_char.columns[2]
     q_tuv_avg = (spotreba_tuv / 8760) * 1000
     potreba_ut_teorie = [max(0, ztrata * (t_vnitrni - t) / (t_vnitrni - t_design)) for t in tmy['T_smooth']]
+    
     if "Faktury" in metodika_vypoctu:
         k_oprava = spotreba_ut / (sum(potreba_ut_teorie) / 1000) if sum(potreba_ut_teorie) > 0 else 1.0
     else:
         k_oprava = 1.0
         spotreba_ut = sum(potreba_ut_teorie) / 1000
+
     try: t_water_max = float(t_spad.split('/')[0])
     except: t_water_max = 55.0
 
@@ -151,6 +175,8 @@ if st.session_state.tmy_df is not None:
         res.append([t_out, q_need, q_tc, q_biv, el_tc, el_biv])
 
     df_sim = pd.DataFrame(res, columns=['Temp', 'Q_need', 'Q_tc', 'Q_biv', 'El_tc', 'El_biv'])
+    
+    # Výpočet bivalence pro graf
     t_biv_val = -12.0
     for t in np.linspace(15, -15, 500):
         if (np.interp(t, df_char[t_col], df_char[v_col]) * pocet_tc) < (max(0, (ztrata * (t_vnitrni - t) / (t_vnitrni - t_design) * k_oprava)) + q_tuv_avg):
@@ -161,14 +187,17 @@ if st.session_state.tmy_df is not None:
     q_tc_s, q_bv_s = df_sim['Q_tc'].sum()/1000, df_sim['Q_biv'].sum()/1000
     el_tc_s, el_bv_s = df_sim['El_tc'].sum()/1000, df_sim['El_biv'].sum()/1000
 
-    # --- GRAFY (PŮVODNÍ STYL) ---
+    # --- VYKRESLENÍ GRAFŮ (OPRAVENÁ VERZE v5.4) ---
+    st.markdown("---")
     st.header(f"📊 Výsledky: {nazev_projektu}")
+    
     fig12, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
     tr = np.linspace(-15, 18, 100); q_p = np.array([max(0, (ztrata * (t_vnitrni - t) / (t_vnitrni - t_design) * k_oprava)) + q_tuv_avg for t in tr])
     p_p = np.array([np.interp(t, df_char[t_col], df_char[v_col]) * pocet_tc for t in tr])
     ax1.plot(tr, q_p, 'r-', lw=2, label='Potřeba (ÚT+TUV)'); ax1.plot(tr, p_p, 'b--', alpha=0.4, label='Max kaskáda TČ')
     ax1.fill_between(tr, p_p, q_p, where=(q_p > p_p), color='red', alpha=0.2, hatch='XXXX', label='Oblast bivalence')
     ax1.axvline(t_biv_val, color='black', linestyle=':', lw=2, label=f'Bod bivalence: {t_biv_val:.1f}°C'); ax1.set_title("1. DYNAMIKA PROVOZU"); ax1.legend()
+    
     df_sim['TR'] = df_sim['Temp'].round(); dft = df_sim.groupby('TR')[['Q_tc', 'Q_biv']].sum()
     ax2.bar(dft.index, dft['Q_tc'], color='#3498db', label='TČ'); ax2.bar(dft.index, dft['Q_biv'], bottom=dft['Q_tc'], color='#e74c3c', label='Biv'); ax2.set_title("2. ENERGETICKÝ MIX DLE TEPLOT"); ax2.legend()
     st.pyplot(fig12)
@@ -176,6 +205,7 @@ if st.session_state.tmy_df is not None:
     fig34, (ax3, ax4) = plt.subplots(1, 2, figsize=(18, 7))
     df_sim['Month'] = (df_sim.index // (24 * 30.5)).astype(int) + 1; m_df = df_sim.groupby('Month').agg({'Q_tc': 'sum', 'Q_biv': 'sum'})
     ax3.bar(m_df.index, m_df['Q_tc']/1000, color='#ADD8E6', label='TČ'); ax3.bar(m_df.index, m_df['Q_biv']/1000, bottom=m_df['Q_tc']/1000, color='#FF0000', label='Biv'); ax3.set_title("3. MĚSÍČNÍ BILANCE ENERGIE"); ax3.legend()
+    
     q_sort = np.sort(df_sim['Q_need'].values)[::-1]; p_lim_biv = np.interp(t_biv_val, df_char[t_col], df_char[v_col]) * pocet_tc
     ax4.plot(range(8760), q_sort, 'r-', lw=2); ax4.fill_between(range(8760), 0, np.minimum(q_sort, p_lim_biv), color='#ADD8E6', label='Kryto TČ'); ax4.fill_between(range(8760), p_lim_biv, q_sort, where=(q_sort > p_lim_biv), color='#FF0000', label='Bivalence'); ax4.set_title("4. TRVÁNÍ POTŘEBY (MONOTÓNA)"); ax4.legend()
     st.pyplot(fig34)
@@ -197,14 +227,19 @@ if st.session_state.tmy_df is not None:
         ax7.set_title("SROVNÁNÍ NÁKLADŮ [Kč/rok]"); st.pyplot(fig7)
 
     # --- REPORT GENERATOR ---
-    def generate_pdf_v54():
+    def generate_pdf_v55():
         pdf = FPDF()
         has_u = os.path.exists(FONT_REGULAR)
-        if has_u: pdf.add_font("DejaVu", "", FONT_REGULAR); pdf.add_font("DejaVu", "B", FONT_BOLD); pdf.set_font("DejaVu", "B", 16)
-        else: pdf.set_font("Helvetica", "B", 16)
+        if has_u: 
+            pdf.add_font("DejaVu", "", FONT_REGULAR); 
+            pdf.add_font("DejaVu", "B", FONT_BOLD)
+            pdf.set_font("DejaVu", "", 12)
+        else: pdf.set_font("Helvetica", "", 12)
+        
         def cz(t): return str(t) if has_u else "".join([c for c in unicodedata.normalize('NFKD', str(t)) if not unicodedata.combining(c)])
         
         pdf.add_page()
+        pdf.set_font(pdf.font_family, "B", 16)
         pdf.cell(0, 10, cz(f"TECHNICKÝ REPORT: {nazev_projektu.upper()}"), ln=True, align="C")
         pdf.ln(10); pdf.set_font(pdf.font_family, "B", 11); pdf.cell(0, 8, cz("METODIKA VÝPOČTU"), ln=True)
         pdf.set_font(pdf.font_family, "", 9)
@@ -216,11 +251,14 @@ if st.session_state.tmy_df is not None:
         pdf.cell(0, 6, cz(f"- TZ: {ztrata} kW | Potreba UT: {spotreba_ut:.1f} MWh | TUV: {spotreba_tuv:.1f} MWh"), ln=True)
         pdf.cell(0, 6, cz(f"- TC: {nazev_tc} ({pocet_tc} ks) | Bod bivalence: {t_biv_val:.1f} C"), ln=True)
         
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f: fig12.savefig(f.name, dpi=100); pdf.image(f.name, x=10, y=pdf.get_y()+5, w=190)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f: 
+            fig12.savefig(f.name, dpi=100); pdf.image(f.name, x=10, y=pdf.get_y()+5, w=190)
         pdf.add_page(); 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f: fig34.savefig(f.name, dpi=100); pdf.image(f.name, x=10, y=15, w=190)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f: fig5.savefig(f.name, dpi=100); pdf.image(f.name, x=10, y=105, w=190)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f: 
+            fig34.savefig(f.name, dpi=100); pdf.image(f.name, x=10, y=15, w=190)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f: 
+            fig5.savefig(f.name, dpi=100); pdf.image(f.name, x=10, y=105, w=190)
         return bytes(pdf.output())
 
     if st.sidebar.button("🚀 GENEROVAT PDF REPORT"):
-        pdf_bytes = generate_pdf_v54(); st.sidebar.download_button("📥 Stáhnout PDF", pdf_bytes, f"Report_{nazev_projektu}.pdf")
+        pdf_bytes = generate_pdf_v55(); st.sidebar.download_button("📥 Stáhnout PDF", pdf_bytes, f"Report_{nazev_projektu}.pdf")
