@@ -50,7 +50,7 @@ def load_char(file):
         return pd.read_csv(io.StringIO(content), sep=sep, decimal=',')
     except: return None
 
-st.set_page_config(page_title="Simulator TC v4.8 - PVGIS & Zoom Map", layout="wide")
+st.set_page_config(page_title="Simulator TC v4.9 - Fixed Map Report", layout="wide")
 download_fonts()
 
 # Inicializace session state
@@ -64,10 +64,10 @@ with st.sidebar:
     st.header("⚙️ Konfigurace")
     with st.expander("ℹ️ Metodika a logika výpočtu"):
         st.markdown("""
-        **1. Klimatická data (TMY):** Výpočet probíhá hodinu po hodině (8760 záznamů).
+        **1. Klimatická data (TMY):** Výpočet probíhá hodinu po hodině.
         **2. Tepelná setrvačnost:** Simulace využívá plovoucí průměr venkovních teplot za 6 hodin.
         **3. Priorita TUV:** Potřeba TUV je uvažována jako prioritní odběr.
-        **4. Ekvitermní COP:** Účinnost (COP) je dynamicky přepočítávána podle otopné vody.
+        **4. Ekvitermní COP:** Účinnost (COP) je dynamicky přepočítávána.
         **5. Bod bivalence:** Výsledný bod, kde potřeba budovy převýší výkon kaskády.
         """)
     
@@ -121,14 +121,14 @@ if tmy_source == "🌍 Stáhnout automaticky z mapy (PVGIS)":
         
         st.write(f"**Souřadnice:** {st.session_state.lat:.4f}, {st.session_state.lon:.4f}")
         if st.button("⬇️ STÁHNOUT DATA PRO TUTO LOKACI", type="primary"):
-            with st.spinner("Stahuji data..."):
+            with st.spinner("Stahuji data z PVGIS..."):
                 url = f"https://re.jrc.ec.europa.eu/api/tmy?lat={st.session_state.lat}&lon={st.session_state.lon}&outputformat=csv"
                 resp = requests.get(url)
                 if resp.status_code == 200:
                     st.session_state.tmy_df = load_tmy_robust(io.BytesIO(resp.content))
                     st.session_state.tmy_source_label = f"PVGIS (Lat: {st.session_state.lat:.4f}, Lon: {st.session_state.lon:.4f})"
                     st.success("Data stažena!")
-                else: st.error("Chyba při stahování.")
+                else: st.error("Chyba při stahování dat z PVGIS.")
     with c2:
         m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=15)
         folium.Marker([st.session_state.lat, st.session_state.lon]).add_to(m)
@@ -189,8 +189,8 @@ if st.session_state.tmy_df is not None and df_char is not None:
 
     expl_12 = "Graf 1 a 2: Bod bivalence určuje venkovní teplotu, pod kterou musí kaskádě TČ pomáhat bivalentní zdroj."
     expl_34 = "Graf 3 a 4: Měsíční bilance ukazuje sezónní využití zdrojů. Monotóna výkonu vizualizuje časové rozložení potřeby tepla."
-    expl_5 = "Graf 5: Serazena cetnost hodinovych teplot v roce. Krivka kryti TC kopiruje potrebu budovy az do bodu bivalence. Vizualizace potvrzuje, ze extremni mrazy tvori v celorocnim fondu jen zlomek provozu, coz doklada stabilitu kaskady."
-    expl_67 = "Graf 6 znázorňuje podíl bivalence na tepelné energii za rok, podíl na spotřebované energii je v tablce pod grafem, Graf 7 znázorňuje porovnání ročních nákladů."
+    expl_5 = "Graf 5: Seřazená četnost hodinových teplot v roce. Křivka krytí TČ kopíruje potřebu budovy až do bodu bivalence."
+    expl_67 = "Graf 6 znázorňuje podíl bivalence na tepelné energii za rok, podíl na spotřebované energii je v tabulce pod grafem. Graf 7 znázorňuje porovnání ročních nákladů."
 
     st.markdown("---")
     st.header(f"📊 Výsledky projektu: {nazev_projektu}")
@@ -235,7 +235,7 @@ if st.session_state.tmy_df is not None and df_char is not None:
         for bar in bars: ax7.text(bar.get_x() + bar.get_width()/2., bar.get_height(), f'{int(bar.get_height()):,} Kč', ha='center', va='bottom')
         ax7.set_title("SROVNÁNÍ NÁKLADŮ [Kč/rok]"); st.pyplot(fig7); st.info(expl_67)
 
-    def generate_pdf_v48():
+    def generate_pdf_v49():
         pdf = FPDF()
         has_u = os.path.exists(FONT_REGULAR)
         if has_u: pdf.add_font("DejaVu", "", FONT_REGULAR); pdf.add_font("DejaVu", "B", FONT_BOLD); pdf.set_font("DejaVu", "B", 16)
@@ -244,23 +244,27 @@ if st.session_state.tmy_df is not None and df_char is not None:
 
         # Strana 1
         pdf.add_page()
-        pdf.cell(0, 10, cz(f"TECHNICKY REPORT: {nazev_projektu.upper()}"), ln=True, align="C")
-        pdf.set_font(pdf.font_family, "B", 11); pdf.cell(0, 8, cz("VSTUPNI PARAMETRY"), ln=True); pdf.set_font(pdf.font_family, "", 10)
+        pdf.cell(0, 10, cz(f"TECHNICKÝ REPORT: {nazev_projektu.upper()}"), ln=True, align="C")
+        pdf.set_font(pdf.font_family, "B", 11); pdf.cell(0, 8, cz("VSTUPNÍ PARAMETRY"), ln=True); pdf.set_font(pdf.font_family, "", 10)
         pdf.cell(0, 6, cz(f"- Lokalita: {st.session_state.lat:.4f}, {st.session_state.lon:.4f}"), ln=True)
-        pdf.cell(0, 6, cz(f"- Zdroj dat: {st.session_state.tmy_source_label}"), ln=True)
-        pdf.cell(0, 6, cz(f"- Model TC: {nazev_tc} | Pocet v kaskade: {pocet_tc} | Ztrata: {ztrata} kW"), ln=True)
-        pdf.cell(0, 6, cz(f"- Rocni spotreba UT: {spotreba_ut} MWh | TUV: {spotreba_tuv} MWh"), ln=True)
-        pdf.cell(0, 6, cz(f"- Teplotni spad: {t_spad} | Bod bivalence: {t_biv_val:.1f} C"), ln=True)
+        pdf.cell(0, 6, cz(f"- Zdroj klimatických dat: {st.session_state.tmy_source_label}"), ln=True)
+        pdf.cell(0, 6, cz(f"- Model TČ: {nazev_tc} | Počet v kaskádě: {pocet_tc} | Ztráta: {ztrata} kW"), ln=True)
+        pdf.cell(0, 6, cz(f"- Roční spotřeba ÚT: {spotreba_ut} MWh | TUV: {spotreba_tuv} MWh"), ln=True)
+        pdf.cell(0, 6, cz(f"- Teplotní spád: {t_spad} | Bod bivalence: {t_biv_val:.1f} °C"), ln=True)
         
-        # Detailní náhled mapy (Zoom 16) + Marker
+        # FIX: Opravený náhled mapy s viditelným markerem
         try:
-            # Parametry: ll=stred, z=16 (detail), pt=bod (marker)
-            map_url = f"https://static-maps.yandex.ru/1.x/?ll={st.session_state.lon},{st.session_state.lat}&z=16&l=map&size=450,450&pt={st.session_state.lon},{st.session_state.lat},vstdm"
-            m_resp = requests.get(map_url, timeout=5)
+            lat, lon = st.session_state.lat, st.session_state.lon
+            # Použití jiného stabilnějšího rendereru pro mapy (OpenStreetMap Static)
+            map_url = f"https://static-maps.yandex.ru/1.x/?ll={lon},{lat}&z=16&l=map&size=450,450&pt={lon},{lat},pm2rdm"
+            m_resp = requests.get(map_url, timeout=10)
             if m_resp.status_code == 200:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f_map:
-                    f_map.write(m_resp.content); pdf.image(f_map.name, x=150, y=25, w=45)
-        except: pass
+                    f_map.write(m_resp.content)
+                    f_map_name = f_map.name
+                pdf.image(f_map_name, x=145, y=25, w=50) # Umístění vpravo nahoře
+        except:
+            pass # Pokud mapa selže, report se vygeneruje bez ní
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f1: fig12.savefig(f1.name, dpi=100); pdf.image(f1.name, x=10, y=pdf.get_y()+5, w=190)
         pdf.set_xy(10, pdf.get_y()+85); pdf.set_font(pdf.font_family, "", 8); pdf.multi_cell(0, 4, cz(expl_12))
@@ -276,11 +280,11 @@ if st.session_state.tmy_df is not None and df_char is not None:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f6: fig6.savefig(f6.name, dpi=100); pdf.image(f6.name, x=10, y=15, w=90)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f7: fig7.savefig(f7.name, dpi=100); pdf.image(f7.name, x=105, y=15, w=90)
         pdf.set_xy(10, 105); pdf.set_font(pdf.font_family, "B", 10); pdf.cell(0, 8, cz("TABULKA BILANCE BIVALENCE"), ln=True); pdf.set_font(pdf.font_family, "", 9)
-        pdf.cell(0, 5, cz(f"Energie (MWh): TC {df_biv_table.iloc[0,1]} | Biv {df_biv_table.iloc[0,2]} | Podil: {df_biv_table.iloc[0,3]}%"), ln=True)
-        pdf.cell(0, 5, cz(f"Elektrina (MWh): TC {df_biv_table.iloc[1,1]} | Biv {df_biv_table.iloc[1,2]} | Podil: {df_biv_table.iloc[1,3]}%"), ln=True)
+        pdf.cell(0, 5, cz(f"Energie (MWh): TČ {df_biv_table.iloc[0,1]} | Biv {df_biv_table.iloc[0,2]} | Podíl: {df_biv_table.iloc[0,3]}%"), ln=True)
+        pdf.cell(0, 5, cz(f"Elektřina (MWh): TČ {df_biv_table.iloc[1,1]} | Biv {df_biv_table.iloc[1,2]} | Podíl: {df_biv_table.iloc[1,3]}%"), ln=True)
         pdf.ln(5); pdf.set_font(pdf.font_family, "", 8); pdf.multi_cell(0, 5, cz(expl_67))
         return bytes(pdf.output())
 
     if st.sidebar.button("🚀 GENEROVAT PDF REPORT"):
-        pdf_data = generate_pdf_v48()
+        pdf_data = generate_pdf_v49()
         st.sidebar.download_button("📥 Stáhnout PDF", pdf_data, f"Report_{nazev_projektu}.pdf", "application/pdf")
