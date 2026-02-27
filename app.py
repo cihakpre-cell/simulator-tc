@@ -49,7 +49,7 @@ def load_char(file):
         return pd.read_csv(io.StringIO(content), sep=sep, decimal=',')
     except: return None
 
-st.set_page_config(page_title="Simulator TC v6.5", layout="wide")
+st.set_page_config(page_title="Simulator TC v6.6", layout="wide")
 download_fonts()
 
 if "lat" not in st.session_state: st.session_state.lat = 50.0702
@@ -78,7 +78,6 @@ with st.sidebar:
         """)
     
     st.divider()
-    
     st.header("⚙️ Konfigurace")
     nazev_projektu = st.text_input("Název projektu", "SVJ Sládkovičova")
     nazev_tc = st.text_input("Model tepelného čerpadla", "NIBE S2125-12")
@@ -120,7 +119,7 @@ c1, c2 = st.columns([1, 2])
 with c1:
     adresa = st.text_input("Lokalita (vyhledat):")
     if adresa and st.button("Hledat"):
-        loc = Nominatim(user_agent="tc_sim_v65").geocode(adresa)
+        loc = Nominatim(user_agent="tc_sim_v66").geocode(adresa)
         if loc: st.session_state.lat, st.session_state.lon = loc.latitude, loc.longitude
     st.write(f"📍 **Souřadnice:** {st.session_state.lat:.4f}, {st.session_state.lon:.4f}")
     if st.button("⬇️ STÁHNOUT TMY DATA", type="primary"):
@@ -131,13 +130,13 @@ with c1:
 with c2:
     m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=13)
     folium.Marker([st.session_state.lat, st.session_state.lon]).add_to(m)
-    out = st_folium(m, height=250, width=600, key="mapa_v65")
+    out = st_folium(m, height=250, width=600, key="mapa_v66")
     if out and out.get("last_clicked"):
         if out["last_clicked"]["lat"] != st.session_state.lat:
             st.session_state.lat, st.session_state.lon = out["last_clicked"]["lat"], out["last_clicked"]["lng"]
             st.rerun()
 
-# --- VÝPOČET A ZOBRAZENÍ VÝSLEDKŮ ---
+# --- VÝPOČET ---
 if st.session_state.tmy_df is not None:
     tmy = st.session_state.tmy_df.copy()
     tmy['T2m'] = pd.to_numeric(tmy['T2m'], errors='coerce')
@@ -180,13 +179,6 @@ if st.session_state.tmy_df is not None:
     q_tc_s, q_bv_s = df_sim['Q_tc'].sum()/1000, df_sim['Q_biv'].sum()/1000
     el_tc_s, el_bv_s = df_sim['El_tc'].sum()/1000, df_sim['El_biv'].sum()/1000
 
-    df_table_biv = pd.DataFrame({
-        "Metrika": ["Teplo [MWh]", "Elektřina [MWh]"], 
-        "TČ": [round(q_tc_s, 2), round(el_tc_s, 2)], 
-        "Bivalence": [round(q_bv_s, 2), round(el_bv_s, 2)], 
-        "Podíl [%]": [round(q_bv_s/(q_tc_s+q_bv_s)*100, 1), round(el_bv_s/(el_tc_s+el_bv_s)*100, 1)]
-    })
-
     # --- GRAFY ---
     fig12, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
     tr = np.linspace(-15, 18, 100); q_p = np.array([max(0, (ztrata * (t_vnitrni - t) / (t_vnitrni - t_design) * k_oprava)) + q_tuv_avg for t in tr])
@@ -201,8 +193,6 @@ if st.session_state.tmy_df is not None:
     df_sim['Month'] = (df_sim.index // (24 * 30.5)).astype(int) + 1; m_df = df_sim.groupby('Month').agg({'Q_tc': 'sum', 'Q_biv': 'sum'})
     ax3.bar(m_df.index, m_df['Q_tc']/1000, color='#ADD8E6', label='TČ'); ax3.bar(m_df.index, m_df['Q_biv']/1000, bottom=m_df['Q_tc']/1000, color='#FF0000', label='Biv'); ax3.set_title("3. MĚSÍČNÍ BILANCE ENERGIE"); ax3.legend()
     q_sort = np.sort(df_sim['Q_need'].values)[::-1]; p_lim = np.interp(t_biv_val, df_char[t_col], df_char[v_col]) * pocet_tc
-    
-    # OPRAVA BAREVNOSTI KŘIVKY (místo červené je tmavě modrá, aby nemátla)
     ax4.plot(range(8760), q_sort, color='#2980b9', lw=2); 
     ax4.fill_between(range(8760), 0, np.minimum(q_sort, p_lim), color='#ADD8E6', label='Kryto TČ'); 
     ax4.fill_between(range(8760), p_lim, q_sort, where=(q_sort > p_lim), color='#FF0000', label='Bivalence'); 
@@ -210,7 +200,6 @@ if st.session_state.tmy_df is not None:
 
     fig5, ax5 = plt.subplots(figsize=(18, 5))
     df_st = df_sim.sort_values('Temp').reset_index(drop=True); ax5.plot(df_st.index, df_st['Q_need'], 'r', label='Potřeba UT+TUV'); ax5.plot(df_st.index, df_st['Q_tc'], 'b', label='Krytí TČ'); ax5.set_title("5. ČETNOST TEPLOT V ROCE"); ax5.legend()
-
     fig6, ax6 = plt.subplots(figsize=(6, 6)); ax6.pie([q_tc_s, q_bv_s], labels=['TČ', 'Biv'], autopct='%1.1f%%', colors=['#ADD8E6', '#FF0000']); ax6.set_title("ROČNÍ PODÍL ENERGIE")
     fig7, ax7 = plt.subplots(figsize=(6, 6)); ax7.bar(['CZT', 'TČ'], [naklady_czt, naklady_tc], color=['#95a5a6', '#2ecc71'])
     for i, v in enumerate([naklady_czt, naklady_tc]): ax7.text(i, v, f"{int(v):,} Kč", ha='center', va='bottom')
@@ -222,19 +211,17 @@ if st.session_state.tmy_df is not None:
     cl, cr = st.columns(2)
     with cl: 
         st.subheader("6. BILANCE BIVALENCE")
-        st.table(df_table_biv)
         st.pyplot(fig6)
     with cr: 
         st.subheader("7. EKONOMIKA")
         st.pyplot(fig7)
 
     # --- PDF GENERATOR ---
-    def generate_pdf_v65():
+    def generate_pdf_v66():
         pdf = FPDF()
         has_u = os.path.exists(FONT_REGULAR)
         if has_u: 
-            pdf.add_font("DejaVu", "", FONT_REGULAR)
-            pdf.add_font("DejaVu", "B", FONT_BOLD)
+            pdf.add_font("DejaVu", "", FONT_REGULAR); pdf.add_font("DejaVu", "B", FONT_BOLD)
             pdf.set_font("DejaVu", "", 12)
         else: pdf.set_font("Helvetica", "", 12)
         
@@ -244,12 +231,9 @@ if st.session_state.tmy_df is not None:
         
         pdf.add_page()
         pdf.set_font(pdf.font_family, "B", 16)
-        pdf.cell(0, 10, cz(f"TECHNICKÝ REPORT: {nazev_projektu.upper()}"), ln=True, align="C")
-        pdf.ln(5)
+        pdf.cell(0, 10, cz(f"TECHNICKÝ REPORT: {nazev_projektu.upper()}"), ln=True, align="C"); pdf.ln(5)
         
-        # PLNY TEXT METODIKY
-        pdf.set_font(pdf.font_family, "B", 11)
-        pdf.cell(0, 8, cz("METODIKA VÝPOČTU A LOGIKA SIMULACE"), ln=True)
+        pdf.set_font(pdf.font_family, "B", 11); pdf.cell(0, 8, cz("METODIKA VÝPOČTU A LOGIKA SIMULACE"), ln=True)
         pdf.set_font(pdf.font_family, "", 9)
         metodika_text = (
             "Vypocet vychazi z hodinove simulace energeticke bilance objektu (8760 kroku za rok). "
@@ -257,75 +241,60 @@ if st.session_state.tmy_df is not None:
             "Vypocet zohlednuje tepelnou setrvacnost budovy, dynamicke rizeni teploty otopne vody dle ekvitermy a prioritni ohrev TUV. "
             "Vysledkem je presne stanoveni bodu bivalence a realneho sezonniho COP."
         )
-        pdf.multi_cell(0, 5, cz(metodika_text))
-        pdf.ln(5); pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(5)
+        pdf.multi_cell(0, 5, cz(metodika_text)); pdf.ln(5); pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(5)
         
-        # VSTUPNI PARAMETRY + MAPKA
         pdf.set_font(pdf.font_family, "B", 11); pdf.cell(0, 8, cz("VSTUPNÍ PARAMETRY"), ln=True)
-        pdf.set_font(pdf.font_family, "", 10)
-        curr_y = pdf.get_y()
-        
+        pdf.set_font(pdf.font_family, "", 10); curr_y = pdf.get_y()
         pdf.cell(0, 6, cz(f"- Lokalita: {st.session_state.lat:.4f}, {st.session_state.lon:.4f}"), ln=True)
-        pdf.cell(0, 6, cz(f"- Zdroj klimatickych dat: PVGIS (Lat: {st.session_state.lat:.4f}, Lon: {st.session_state.lon:.4f})"), ln=True)
-        pdf.cell(0, 6, cz(f"- Model TC: {nazev_tc} | Pocet v kaskade: {pocet_tc} | Ztrata: {ztrata} kW"), ln=True)
-        
+        pdf.cell(0, 6, cz(f"- Zdroj klimatickych dat: PVGIS (TMY)"), ln=True)
+        pdf.cell(0, 6, cz(f"- Model TC: {nazev_tc} | Pocet: {pocet_tc} | Ztrata: {ztrata} kW"), ln=True)
         if metodika_vypoctu == "Faktury":
-            pdf.cell(0, 6, cz(f"- Rocni spotreba UT: {spotreba_ut} MWh | TUV: {spotreba_tuv} MWh (dle faktur)"), ln=True)
+            pdf.cell(0, 6, cz(f"- Rocni spotreba UT: {spotreba_ut} MWh | TUV: {spotreba_tuv} MWh (Faktury)"), ln=True)
         else:
-            pdf.cell(0, 6, cz(f"- Vypoctova potreba UT: {spotreba_ut:.1f} MWh | TUV: {spotreba_tuv:.1f} MWh (dle projektu)"), ln=True)
-            
-        pdf.cell(0, 6, cz(f"- Teplotni spad: {t_spad} | Bod bivalence: {t_biv_val:.1f} °C"), ln=True)
+            pdf.cell(0, 6, cz(f"- Potreba UT: {spotreba_ut:.1f} MWh | TUV: {spotreba_tuv:.1f} MWh (Projekt)"), ln=True)
+        pdf.cell(0, 6, cz(f"- Teplotni spad: {t_spad} | Bod bivalence: {t_biv_val:.1f} C"), ln=True)
         
         try:
             map_url = f"https://static-maps.yandex.ru/1.x/?ll={st.session_state.lon},{st.session_state.lat}&z=13&l=map&size=450,300&pt={st.session_state.lon},{st.session_state.lat},pm2rdl"
             r = requests.get(map_url, timeout=5)
             if r.status_code == 200:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f_map:
-                    f_map.write(r.content)
-                    pdf.image(f_map.name, x=135, y=curr_y, w=65)
+                    f_map.write(r.content); pdf.image(f_map.name, x=135, y=curr_y, w=60)
         except: pass
 
-        # GRAFY 1, 2
         pdf.set_y(curr_y + 40)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
             fig12.savefig(f.name, dpi=100); pdf.image(f.name, x=10, y=pdf.get_y(), w=190)
         pdf.ln(2); pdf.set_font(pdf.font_family, "", 8); pdf.set_text_color(100, 100, 100)
         pdf.multi_cell(0, 4, cz("Graf 1 a 2: Bod bivalence urcuje venkovni teplotu, pod kterou musi kaskade TC pomahat bivalentni zdroj."))
         
-        # GRAFY 3, 4
         pdf.add_page()
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
             fig34.savefig(f.name, dpi=100); pdf.image(f.name, x=10, y=15, w=190)
-        pdf.set_y(90); pdf.multi_cell(0, 4, cz("Graf 3 a 4: Mesicni bilance ukazuje sezonni vyuziti zdroju. Monotona vykonu vizualizuje casove rozlozeni potreby tepla."))
-        
-        # GRAF 5
+        pdf.set_y(90); pdf.multi_cell(0, 4, cz("Graf 3 a 4: Mesicni bilance ukazuje sezonni vyuziti zdroju. Monotona vykonu vizualizuje casove rozlozeni potreby tepla (horni modra krivka)."))
         pdf.ln(10)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
             fig5.savefig(f.name, dpi=100); pdf.image(f.name, x=10, y=pdf.get_y(), w=190)
-        pdf.ln(2)
-        pdf.multi_cell(0, 4, cz("Graf 5: Serazena cetnost hodinovych teplot v roce. Krivka kryti TC kopiruje potrebu budovy az do bodu bivalence."))
+        pdf.ln(2); pdf.multi_cell(0, 4, cz("Graf 5: Serazena cetnost hodinovych teplot v roce. Krivka kryti TC kopiruje potrebu budovy az do bodu bivalence."))
         
-        # GRAFY 6, 7
         pdf.add_page()
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
-            fig6.savefig(f.name, dpi=100); pdf.image(f.name, x=10, y=15, w=90)
+            fig6.savefig(f.name, dpi=100); pdf.image(f.name, x=15, y=15, w=80)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
-            fig7.savefig(f.name, dpi=100); pdf.image(f.name, x=105, y=15, w=90)
+            fig7.savefig(f.name, dpi=100); pdf.image(f.name, x=110, y=15, w=80)
         
-        # TEXTOVÁ TABULKA A VYSVĚTLIVKY
-        pdf.set_y(105); pdf.set_text_color(0, 0, 0); pdf.set_font(pdf.font_family, "B", 11)
+        pdf.set_y(100); pdf.set_text_color(0, 0, 0); pdf.set_font(pdf.font_family, "B", 11)
         pdf.cell(0, 8, cz("TABULKA BILANCE BIVALENCE"), ln=True)
         pdf.set_font(pdf.font_family, "", 10)
         pdf.cell(0, 6, cz(f"Energie (MWh): TC {q_tc_s:.2f} | Biv {q_bv_s:.2f} | Podil: {q_bv_s/(q_tc_s+q_bv_s)*100:.1f} %"), ln=True)
         pdf.cell(0, 6, cz(f"Elektrina (MWh): TC {el_tc_s:.2f} | Biv {el_bv_s:.2f} | Podil: {el_bv_s/(el_tc_s+el_bv_s)*100:.1f} %"), ln=True)
-        pdf.ln(4)
-        pdf.set_font(pdf.font_family, "", 8); pdf.set_text_color(100, 100, 100)
-        pdf.multi_cell(0, 4, cz("Graf 6 znazornuje podil bivalence na tepelne energii za rok, podil na spotrebovane energii je v tabulce pod grafem."))
-        pdf.multi_cell(0, 4, cz("Graf 7 znazornuje porovnani rocnich nakladu."))
+        pdf.ln(5); pdf.set_font(pdf.font_family, "", 8); pdf.set_text_color(100, 100, 100)
+        pdf.multi_cell(0, 4, cz("Graf 6 znazornuje podil bivalence na celkove vyrobene tepelne energii za rok."))
+        pdf.multi_cell(0, 4, cz("Graf 7 znazornuje porovnani rocnich nakladu mezi stavajicim CZT a novym resenim s kaskadou TC."))
         
         return bytes(pdf.output())
 
     with st.sidebar:
         st.divider()
         if st.button("🚀 GENEROVAT PDF REPORT", type="primary"):
-            st.download_button("📥 Stáhnout PDF", generate_pdf_v65(), f"Report_{nazev_projektu}.pdf")
+            st.download_button("📥 Stáhnout PDF", generate_pdf_v66(), f"Report_{nazev_projektu}.pdf")
