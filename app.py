@@ -49,7 +49,7 @@ def load_char(file):
         return pd.read_csv(io.StringIO(content), sep=sep, decimal=',')
     except: return None
 
-st.set_page_config(page_title="Simulator TC v6.7", layout="wide")
+st.set_page_config(page_title="Simulator TC v6.8", layout="wide")
 download_fonts()
 
 if "lat" not in st.session_state: st.session_state.lat = 50.0702
@@ -119,7 +119,7 @@ c1, c2 = st.columns([1, 2])
 with c1:
     adresa = st.text_input("Lokalita (vyhledat):")
     if adresa and st.button("Hledat"):
-        loc = Nominatim(user_agent="tc_sim_v67").geocode(adresa)
+        loc = Nominatim(user_agent="tc_sim_v68").geocode(adresa)
         if loc: st.session_state.lat, st.session_state.lon = loc.latitude, loc.longitude
     st.write(f"📍 **Souřadnice:** {st.session_state.lat:.4f}, {st.session_state.lon:.4f}")
     if st.button("⬇️ STÁHNOUT TMY DATA", type="primary"):
@@ -130,7 +130,7 @@ with c1:
 with c2:
     m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=13)
     folium.Marker([st.session_state.lat, st.session_state.lon]).add_to(m)
-    out = st_folium(m, height=250, width=600, key="mapa_v67")
+    out = st_folium(m, height=250, width=600, key="mapa_v68")
     if out and out.get("last_clicked"):
         if out["last_clicked"]["lat"] != st.session_state.lat:
             st.session_state.lat, st.session_state.lon = out["last_clicked"]["lat"], out["last_clicked"]["lng"]
@@ -218,14 +218,14 @@ if st.session_state.tmy_df is not None:
     cl, cr = st.columns(2)
     with cl: 
         st.subheader("6. BILANCE BIVALENCE")
-        st.table(df_table_biv)  # <-- ZDE VRÁCENO DO APLIKACE
+        st.table(df_table_biv)
         st.pyplot(fig6)
     with cr: 
         st.subheader("7. EKONOMIKA")
         st.pyplot(fig7)
 
     # --- PDF GENERATOR ---
-    def generate_pdf_v67():
+    def generate_pdf_v68():
         pdf = FPDF()
         has_u = os.path.exists(FONT_REGULAR)
         if has_u: 
@@ -283,7 +283,7 @@ if st.session_state.tmy_df is not None:
         pdf.ln(10)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
             fig5.savefig(f.name, dpi=100); pdf.image(f.name, x=10, y=pdf.get_y(), w=190)
-        pdf.ln(2); pdf.multi_cell(0, 4, cz("Graf 5: Serazena cetnost hodinovych teplot v roce. Krivka kryti TC kopiruje potrebu budovy az do bodu bivalence."))
+        pdf.ln(2); pdf.multi_cell(0, 4, cz("Graf 5: Serazena cetnost hodinovych teplot v roce. Krivka kryti TC kopiruje potrebu budovy až do bodu bivalence."))
         
         pdf.add_page()
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
@@ -291,18 +291,19 @@ if st.session_state.tmy_df is not None:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
             fig7.savefig(f.name, dpi=100); pdf.image(f.name, x=110, y=15, w=80)
         
+        # OPRAVA HORIZONTÁLNÍHO PROSTORU - explicitní nastavení X a šířky
         pdf.set_y(100); pdf.set_text_color(0, 0, 0); pdf.set_font(pdf.font_family, "B", 11)
-        pdf.cell(0, 8, cz("TABULKA BILANCE BIVALENCE"), ln=True)
+        pdf.set_x(10); pdf.cell(0, 8, cz("TABULKA BILANCE BIVALENCE"), ln=True)
         pdf.set_font(pdf.font_family, "", 10)
-        pdf.cell(0, 6, cz(f"Energie (MWh): TC {q_tc_s:.2f} | Biv {q_bv_s:.2f} | Podil: {q_bv_s/(q_tc_s+q_bv_s)*100:.1f} %"), ln=True)
-        pdf.cell(0, 6, cz(f"Elektrina (MWh): TC {el_tc_s:.2f} | Biv {el_bv_s:.2f} | Podil: {el_bv_s/(el_tc_s+el_bv_s)*100:.1f} %"), ln=True)
+        pdf.set_x(10); pdf.cell(0, 6, cz(f"Energie (MWh): TC {q_tc_s:.2f} | Biv {q_bv_s:.2f} | Podil: {q_bv_s/(q_tc_s+q_bv_s)*100:.1f} %"), ln=True)
+        pdf.set_x(10); pdf.cell(0, 6, cz(f"Elektrina (MWh): TC {el_tc_s:.2f} | Biv {el_bv_s:.2f} | Podil: {el_bv_s/(el_tc_s+el_bv_s)*100:.1f} %"), ln=True)
         pdf.ln(5); pdf.set_font(pdf.font_family, "", 8); pdf.set_text_color(100, 100, 100)
-        pdf.multi_cell(0, 4, cz("Graf 6 znazornuje podil bivalence na celkove vyrobene tepelne energii za rok."))
-        pdf.multi_cell(0, 4, cz("Graf 7 znazornuje porovnani rocnich nakladu mezi stavajicim CZT a novym resenim s kaskadou TC."))
+        pdf.set_x(10); pdf.multi_cell(190, 4, cz("Graf 6 znazornuje podil bivalence na celkove vyrobene tepelne energii za rok."))
+        pdf.set_x(10); pdf.multi_cell(190, 4, cz("Graf 7 znazornuje porovnani rocnich nakladu mezi stavajicim CZT a novym resenim s kaskadou TC."))
         
         return bytes(pdf.output())
 
     with st.sidebar:
         st.divider()
         if st.button("🚀 GENEROVAT PDF REPORT", type="primary"):
-            st.download_button("📥 Stáhnout PDF", generate_pdf_v67(), f"Report_{nazev_projektu}.pdf")
+            st.download_button("📥 Stáhnout PDF", generate_pdf_v68(), f"Report_{nazev_projektu}.pdf")
