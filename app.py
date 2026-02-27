@@ -49,7 +49,7 @@ def load_char(file):
         return pd.read_csv(io.StringIO(content), sep=sep, decimal=',')
     except: return None
 
-st.set_page_config(page_title="Simulator TC v6.6", layout="wide")
+st.set_page_config(page_title="Simulator TC v6.7", layout="wide")
 download_fonts()
 
 if "lat" not in st.session_state: st.session_state.lat = 50.0702
@@ -119,7 +119,7 @@ c1, c2 = st.columns([1, 2])
 with c1:
     adresa = st.text_input("Lokalita (vyhledat):")
     if adresa and st.button("Hledat"):
-        loc = Nominatim(user_agent="tc_sim_v66").geocode(adresa)
+        loc = Nominatim(user_agent="tc_sim_v67").geocode(adresa)
         if loc: st.session_state.lat, st.session_state.lon = loc.latitude, loc.longitude
     st.write(f"📍 **Souřadnice:** {st.session_state.lat:.4f}, {st.session_state.lon:.4f}")
     if st.button("⬇️ STÁHNOUT TMY DATA", type="primary"):
@@ -130,7 +130,7 @@ with c1:
 with c2:
     m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=13)
     folium.Marker([st.session_state.lat, st.session_state.lon]).add_to(m)
-    out = st_folium(m, height=250, width=600, key="mapa_v66")
+    out = st_folium(m, height=250, width=600, key="mapa_v67")
     if out and out.get("last_clicked"):
         if out["last_clicked"]["lat"] != st.session_state.lat:
             st.session_state.lat, st.session_state.lon = out["last_clicked"]["lat"], out["last_clicked"]["lng"]
@@ -179,6 +179,13 @@ if st.session_state.tmy_df is not None:
     q_tc_s, q_bv_s = df_sim['Q_tc'].sum()/1000, df_sim['Q_biv'].sum()/1000
     el_tc_s, el_bv_s = df_sim['El_tc'].sum()/1000, df_sim['El_biv'].sum()/1000
 
+    df_table_biv = pd.DataFrame({
+        "Metrika": ["Teplo [MWh]", "Elektřina [MWh]"], 
+        "TČ": [round(q_tc_s, 2), round(el_tc_s, 2)], 
+        "Bivalence": [round(q_bv_s, 2), round(el_bv_s, 2)], 
+        "Podíl [%]": [round(q_bv_s/(q_tc_s+q_bv_s)*100, 1), round(el_bv_s/(el_tc_s+el_bv_s)*100, 1)]
+    })
+
     # --- GRAFY ---
     fig12, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
     tr = np.linspace(-15, 18, 100); q_p = np.array([max(0, (ztrata * (t_vnitrni - t) / (t_vnitrni - t_design) * k_oprava)) + q_tuv_avg for t in tr])
@@ -211,13 +218,14 @@ if st.session_state.tmy_df is not None:
     cl, cr = st.columns(2)
     with cl: 
         st.subheader("6. BILANCE BIVALENCE")
+        st.table(df_table_biv)  # <-- ZDE VRÁCENO DO APLIKACE
         st.pyplot(fig6)
     with cr: 
         st.subheader("7. EKONOMIKA")
         st.pyplot(fig7)
 
     # --- PDF GENERATOR ---
-    def generate_pdf_v66():
+    def generate_pdf_v67():
         pdf = FPDF()
         has_u = os.path.exists(FONT_REGULAR)
         if has_u: 
@@ -297,4 +305,4 @@ if st.session_state.tmy_df is not None:
     with st.sidebar:
         st.divider()
         if st.button("🚀 GENEROVAT PDF REPORT", type="primary"):
-            st.download_button("📥 Stáhnout PDF", generate_pdf_v66(), f"Report_{nazev_projektu}.pdf")
+            st.download_button("📥 Stáhnout PDF", generate_pdf_v67(), f"Report_{nazev_projektu}.pdf")
