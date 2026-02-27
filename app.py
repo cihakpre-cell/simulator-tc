@@ -49,7 +49,7 @@ def load_char(file):
         return pd.read_csv(io.StringIO(content), sep=sep, decimal=',')
     except: return None
 
-st.set_page_config(page_title="Simulator TC v7.1", layout="wide")
+st.set_page_config(page_title="Simulator TC v7.2", layout="wide")
 download_fonts()
 
 if "lat" not in st.session_state: st.session_state.lat = 50.0702
@@ -186,31 +186,40 @@ if st.session_state.tmy_df is not None:
         "Podíl [%]": [round(q_bv_s/(q_tc_s+q_bv_s)*100, 1), round(el_bv_s/(el_tc_s+el_bv_s)*100, 1)]
     })
 
-    # --- GRAFY ---
+    # --- GRAFY (s popisy os) ---
     fig12, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
     tr = np.linspace(-15, 18, 100); q_p = np.array([max(0, (ztrata * (t_vnitrni - t) / (t_vnitrni - t_design) * k_oprava)) + q_tuv_avg for t in tr])
     p_p = np.array([np.interp(t, df_char[t_col], df_char[v_col]) * pocet_tc for t in tr])
     ax1.plot(tr, q_p, 'r-', lw=2, label='Potřeba (UT+TUV)'); ax1.plot(tr, p_p, 'b--', alpha=0.4, label='Max kaskáda TČ')
     ax1.fill_between(tr, p_p, q_p, where=(q_p > p_p), color='red', alpha=0.2, hatch='XXXX', label='Oblast bivalence')
-    ax1.axvline(t_biv_val, color='k', ls=':', label=f'Bod bivalence: {t_biv_val:.1f}°C'); ax1.set_title("1. DYNAMIKA PROVOZU"); ax1.legend()
+    ax1.axvline(t_biv_val, color='k', ls=':', label=f'Bod bivalence: {t_biv_val:.1f}°C')
+    ax1.set_title("1. DYNAMIKA PROVOZU"); ax1.set_xlabel("Venkovní teplota [°C]"); ax1.set_ylabel("Výkon [kW]"); ax1.legend()
+    
     df_sim['TR'] = df_sim['Temp'].round(); dft = df_sim.groupby('TR')[['Q_tc', 'Q_biv']].sum()
-    ax2.bar(dft.index, dft['Q_tc'], color='#3498db', label='TČ'); ax2.bar(dft.index, dft['Q_biv'], bottom=dft['Q_tc'], color='#e74c3c', label='Biv'); ax2.set_title("2. ENERGETICKÝ MIX DLE TEPLOT"); ax2.legend()
+    ax2.bar(dft.index, dft['Q_tc'], color='#3498db', label='TČ'); ax2.bar(dft.index, dft['Q_biv'], bottom=dft['Q_tc'], color='#e74c3c', label='Biv')
+    ax2.set_title("2. ENERGETICKÝ MIX DLE TEPLOT"); ax2.set_xlabel("Venkovní teplota [°C]"); ax2.set_ylabel("Energie [kWh]"); ax2.legend()
 
     fig34, (ax3, ax4) = plt.subplots(1, 2, figsize=(18, 7))
     df_sim['Month'] = (df_sim.index // (24 * 30.5)).astype(int) + 1; m_df = df_sim.groupby('Month').agg({'Q_tc': 'sum', 'Q_biv': 'sum'})
-    ax3.bar(m_df.index, m_df['Q_tc']/1000, color='#ADD8E6', label='TČ'); ax3.bar(m_df.index, m_df['Q_biv']/1000, bottom=m_df['Q_tc']/1000, color='#FF0000', label='Biv'); ax3.set_title("3. MĚSÍČNÍ BILANCE ENERGIE"); ax3.legend()
+    ax3.bar(m_df.index, m_df['Q_tc']/1000, color='#ADD8E6', label='TČ'); ax3.bar(m_df.index, m_df['Q_biv']/1000, bottom=m_df['Q_tc']/1000, color='#FF0000', label='Biv')
+    ax3.set_title("3. MĚSÍČNÍ BILANCE ENERGIE"); ax3.set_xlabel("Měsíc"); ax3.set_ylabel("Teplo [MWh]"); ax3.legend()
+    
     q_sort = np.sort(df_sim['Q_need'].values)[::-1]; p_lim = np.interp(t_biv_val, df_char[t_col], df_char[v_col]) * pocet_tc
-    ax4.plot(range(8760), q_sort, color='#2980b9', lw=2); 
-    ax4.fill_between(range(8760), 0, np.minimum(q_sort, p_lim), color='#ADD8E6', label='Kryto TČ'); 
-    ax4.fill_between(range(8760), p_lim, q_sort, where=(q_sort > p_lim), color='#FF0000', label='Bivalence'); 
-    ax4.set_title("4. TRVÁNÍ POTŘEBY (MONOTONA)"); ax4.legend()
+    ax4.plot(range(8760), q_sort, color='#2980b9', lw=2)
+    ax4.fill_between(range(8760), 0, np.minimum(q_sort, p_lim), color='#ADD8E6', label='Kryto TČ')
+    ax4.fill_between(range(8760), p_lim, q_sort, where=(q_sort > p_lim), color='#FF0000', label='Bivalence')
+    ax4.set_title("4. TRVÁNÍ POTŘEBY (MONOTONA)"); ax4.set_xlabel("Hodin v roce"); ax4.set_ylabel("Výkon [kW]"); ax4.legend()
 
     fig5, ax5 = plt.subplots(figsize=(18, 5))
-    df_st = df_sim.sort_values('Temp').reset_index(drop=True); ax5.plot(df_st.index, df_st['Q_need'], 'r', label='Potřeba UT+TUV'); ax5.plot(df_st.index, df_st['Q_tc'], 'b', label='Krytí TČ'); ax5.set_title("5. ČETNOST TEPLOT V ROCE"); ax5.legend()
+    df_st = df_sim.sort_values('Temp').reset_index(drop=True)
+    ax5.plot(df_st.index, df_st['Q_need'], 'r', label='Potřeba UT+TUV'); ax5.plot(df_st.index, df_st['Q_tc'], 'b', label='Krytí TČ')
+    ax5.set_title("5. ČETNOST TEPLOT V ROCE"); ax5.set_xlabel("Seřazené hodiny [8760 h]"); ax5.set_ylabel("Výkon [kW]"); ax5.legend()
+    
     fig6, ax6 = plt.subplots(figsize=(6, 6)); ax6.pie([q_tc_s, q_bv_s], labels=['TČ', 'Biv'], autopct='%1.1f%%', colors=['#ADD8E6', '#FF0000']); ax6.set_title("ROČNÍ PODÍL ENERGIE")
+    
     fig7, ax7 = plt.subplots(figsize=(6, 6)); ax7.bar(['CZT', 'TČ'], [naklady_czt, naklady_tc], color=['#95a5a6', '#2ecc71'])
     for i, v in enumerate([naklady_czt, naklady_tc]): ax7.text(i, v, f"{int(v):,} Kč", ha='center', va='bottom')
-    ax7.set_title("SROVNÁNÍ NÁKLADŮ [Kč/rok]")
+    ax7.set_title("SROVNÁNÍ NÁKLADŮ"); ax7.set_ylabel("Náklady [Kč/rok]")
 
     st.header(f"📊 Výsledky: {nazev_projektu}")
     st.pyplot(fig12); st.pyplot(fig34); st.pyplot(fig5)
@@ -225,7 +234,7 @@ if st.session_state.tmy_df is not None:
         st.pyplot(fig7)
 
     # --- PDF GENERATOR ---
-    def generate_pdf_v71():
+    def generate_pdf_v72():
         pdf = FPDF()
         has_u = os.path.exists(FONT_REGULAR)
         if has_u: 
@@ -288,11 +297,10 @@ if st.session_state.tmy_df is not None:
         pdf.add_page()
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
             fig34.savefig(f.name, dpi=100); pdf.image(f.name, x=10, y=15, w=190)
-        pdf.set_y(90); pdf.multi_cell(0, 4, cz("Graf 3 a 4: Mesicni bilance ukazuje sezonni vyuziti zdroju. Monotona vykonu vizualizuje casove rozlozeni potreby tepla (horni modra krivka)."))
+        pdf.set_y(90); pdf.multi_cell(0, 4, cz("Graf 3 a 4: Mesicni bilance ukazuje sezonni vyuziti zdroju. Monotona vykonu vizualizuje casove rozlozeni potreby tepla."))
         pdf.ln(10)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
             fig5.savefig(f.name, dpi=100); pdf.image(f.name, x=10, y=pdf.get_y(), w=190)
-        # OPRAVA: Posuneme kurzor o výšku grafu 5 (cca 55mm), aby popisek byl pod ním
         pdf.set_y(pdf.get_y() + 55)
         pdf.multi_cell(0, 4, cz("Graf 5: Serazena cetnost hodinovych teplot v roce. Krivka kryti TC kopiruje potrebu budovy až do bodu bivalence."))
         
@@ -316,5 +324,4 @@ if st.session_state.tmy_df is not None:
     with st.sidebar:
         st.divider()
         if st.button("🚀 GENEROVAT PDF REPORT", type="primary"):
-            st.download_button("📥 Stáhnout PDF", generate_pdf_v71(), f"Report_{nazev_projektu}.pdf")
-
+            st.download_button("📥 Stáhnout PDF", generate_pdf_v72(), f"Report_{nazev_projektu}.pdf")
