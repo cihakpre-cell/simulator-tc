@@ -82,7 +82,7 @@ with st.sidebar:
     nazev_projektu = st.text_input("Název projektu", "SVJ Sládkovičova")
     nazev_tc = st.text_input("Model tepelného čerpadla", "NIBE S2125-12")
     
-    metodika_ui = st.radio("Metodika výpočtu:", ["Faktury (známá spotřeba)", "Projekt (známá TZ)"])
+    metodika_ui = st.radio("Metodika výpočtu:", ["Faktury (známá spotřeba)", "Projekt (známá tepelná ztráta)"])
     metodika_vypoctu = "Faktury" if "Faktury" in metodika_ui else "Projekt"
 
     with st.expander("🏠 Budova a potřeba", expanded=True):
@@ -253,7 +253,7 @@ if st.session_state.tmy_df is not None:
         
         pdf.set_font(pdf.font_family, "B", 9)
         if metodika_vypoctu == "Projekt":
-            spec_text = f"SPECIFIKA VARIANTY PROJEKT: Vypocet vychazi z projektove tepelne ztraty {ztrata} kW pri navrhove teplote {t_design} C."
+            spec_text = f"SPECIFIKA VARIANTY PROJEKT: Vypocet vychazi z projektove tepelne ztraty {ztrata} kW pri navrhove teplote {t_design} C případně počtu osob pro přípravu TUV."
         else:
             spec_text = f"SPECIFIKA VARIANTY FAKTURY: Vypocet je zkalibrovan podle zadane rocni spotreby z faktur ({spotreba_ut} MWh pro UT a {spotreba_tuv} MWh pro TUV)."
         pdf.multi_cell(0, 5, cz(spec_text))
@@ -317,3 +317,4 @@ if st.session_state.tmy_df is not None:
         st.divider()
         if st.button("🚀 GENEROVAT PDF REPORT", type="primary"):
             st.download_button("📥 Stáhnout PDF", generate_pdf_v71(), f"Report_{nazev_projektu}.pdf")
+
