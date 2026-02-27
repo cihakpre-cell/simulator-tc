@@ -49,7 +49,7 @@ def load_char(file):
         return pd.read_csv(io.StringIO(content), sep=sep, decimal=',')
     except: return None
 
-st.set_page_config(page_title="Simulator TC v7.0", layout="wide")
+st.set_page_config(page_title="Simulator TC v7.1", layout="wide")
 download_fonts()
 
 if "lat" not in st.session_state: st.session_state.lat = 50.0702
@@ -119,7 +119,7 @@ c1, c2 = st.columns([1, 2])
 with c1:
     adresa = st.text_input("Lokalita (vyhledat):")
     if adresa and st.button("Hledat"):
-        loc = Nominatim(user_agent="tc_sim_v70").geocode(adresa)
+        loc = Nominatim(user_agent="tc_sim_v71").geocode(adresa)
         if loc: st.session_state.lat, st.session_state.lon = loc.latitude, loc.longitude
     st.write(f"📍 **Souřadnice:** {st.session_state.lat:.4f}, {st.session_state.lon:.4f}")
     if st.button("⬇️ STÁHNOUT TMY DATA", type="primary"):
@@ -130,7 +130,7 @@ with c1:
 with c2:
     m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=13)
     folium.Marker([st.session_state.lat, st.session_state.lon]).add_to(m)
-    out = st_folium(m, height=250, width=600, key="mapa_v70")
+    out = st_folium(m, height=250, width=600, key="mapa_v71")
     if out and out.get("last_clicked"):
         if out["last_clicked"]["lat"] != st.session_state.lat:
             st.session_state.lat, st.session_state.lon = out["last_clicked"]["lat"], out["last_clicked"]["lng"]
@@ -225,7 +225,7 @@ if st.session_state.tmy_df is not None:
         st.pyplot(fig7)
 
     # --- PDF GENERATOR ---
-    def generate_pdf_v70():
+    def generate_pdf_v71():
         pdf = FPDF()
         has_u = os.path.exists(FONT_REGULAR)
         if has_u: 
@@ -251,7 +251,6 @@ if st.session_state.tmy_df is not None:
         )
         pdf.multi_cell(0, 5, cz(metodika_text)); pdf.ln(2)
         
-        # --- DOPLNĚNÁ SPECIFIKA VARIANTY ---
         pdf.set_font(pdf.font_family, "B", 9)
         if metodika_vypoctu == "Projekt":
             spec_text = f"SPECIFIKA VARIANTY PROJEKT: Vypocet vychazi z projektove tepelne ztraty {ztrata} kW pri navrhove teplote {t_design} C."
@@ -293,7 +292,9 @@ if st.session_state.tmy_df is not None:
         pdf.ln(10)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
             fig5.savefig(f.name, dpi=100); pdf.image(f.name, x=10, y=pdf.get_y(), w=190)
-        pdf.ln(2); pdf.multi_cell(0, 4, cz("Graf 5: Serazena cetnost hodinovych teplot v roce. Krivka kryti TC kopiruje potrebu budovy až do bodu bivalence."))
+        # OPRAVA: Posuneme kurzor o výšku grafu 5 (cca 55mm), aby popisek byl pod ním
+        pdf.set_y(pdf.get_y() + 55)
+        pdf.multi_cell(0, 4, cz("Graf 5: Serazena cetnost hodinovych teplot v roce. Krivka kryti TC kopiruje potrebu budovy až do bodu bivalence."))
         
         pdf.add_page()
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
@@ -315,4 +316,4 @@ if st.session_state.tmy_df is not None:
     with st.sidebar:
         st.divider()
         if st.button("🚀 GENEROVAT PDF REPORT", type="primary"):
-            st.download_button("📥 Stáhnout PDF", generate_pdf_v70(), f"Report_{nazev_projektu}.pdf")
+            st.download_button("📥 Stáhnout PDF", generate_pdf_v71(), f"Report_{nazev_projektu}.pdf")
