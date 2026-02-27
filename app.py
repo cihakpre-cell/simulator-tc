@@ -49,7 +49,7 @@ def load_char(file):
         return pd.read_csv(io.StringIO(content), sep=sep, decimal=',')
     except: return None
 
-st.set_page_config(page_title="Simulator TC v6.8", layout="wide")
+st.set_page_config(page_title="Simulator TC v6.9", layout="wide")
 download_fonts()
 
 if "lat" not in st.session_state: st.session_state.lat = 50.0702
@@ -119,7 +119,7 @@ c1, c2 = st.columns([1, 2])
 with c1:
     adresa = st.text_input("Lokalita (vyhledat):")
     if adresa and st.button("Hledat"):
-        loc = Nominatim(user_agent="tc_sim_v68").geocode(adresa)
+        loc = Nominatim(user_agent="tc_sim_v69").geocode(adresa)
         if loc: st.session_state.lat, st.session_state.lon = loc.latitude, loc.longitude
     st.write(f"📍 **Souřadnice:** {st.session_state.lat:.4f}, {st.session_state.lon:.4f}")
     if st.button("⬇️ STÁHNOUT TMY DATA", type="primary"):
@@ -130,7 +130,7 @@ with c1:
 with c2:
     m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=13)
     folium.Marker([st.session_state.lat, st.session_state.lon]).add_to(m)
-    out = st_folium(m, height=250, width=600, key="mapa_v68")
+    out = st_folium(m, height=250, width=600, key="mapa_v69")
     if out and out.get("last_clicked"):
         if out["last_clicked"]["lat"] != st.session_state.lat:
             st.session_state.lat, st.session_state.lon = out["last_clicked"]["lat"], out["last_clicked"]["lng"]
@@ -200,7 +200,7 @@ if st.session_state.tmy_df is not None:
     df_sim['Month'] = (df_sim.index // (24 * 30.5)).astype(int) + 1; m_df = df_sim.groupby('Month').agg({'Q_tc': 'sum', 'Q_biv': 'sum'})
     ax3.bar(m_df.index, m_df['Q_tc']/1000, color='#ADD8E6', label='TČ'); ax3.bar(m_df.index, m_df['Q_biv']/1000, bottom=m_df['Q_tc']/1000, color='#FF0000', label='Biv'); ax3.set_title("3. MĚSÍČNÍ BILANCE ENERGIE"); ax3.legend()
     q_sort = np.sort(df_sim['Q_need'].values)[::-1]; p_lim = np.interp(t_biv_val, df_char[t_col], df_char[v_col]) * pocet_tc
-    ax4.plot(range(8760), q_sort, color='#2980b9', lw=2); 
+    ax4.plot(range(8760), q_sort, color='#2980b9', lw=2); # Tmavě modrá monotóna
     ax4.fill_between(range(8760), 0, np.minimum(q_sort, p_lim), color='#ADD8E6', label='Kryto TČ'); 
     ax4.fill_between(range(8760), p_lim, q_sort, where=(q_sort > p_lim), color='#FF0000', label='Bivalence'); 
     ax4.set_title("4. TRVÁNÍ POTŘEBY (MONOTONA)"); ax4.legend()
@@ -225,7 +225,7 @@ if st.session_state.tmy_df is not None:
         st.pyplot(fig7)
 
     # --- PDF GENERATOR ---
-    def generate_pdf_v68():
+    def generate_pdf_v69():
         pdf = FPDF()
         has_u = os.path.exists(FONT_REGULAR)
         if has_u: 
@@ -263,7 +263,8 @@ if st.session_state.tmy_df is not None:
         pdf.cell(0, 6, cz(f"- Teplotni spad: {t_spad} | Bod bivalence: {t_biv_val:.1f} C"), ln=True)
         
         try:
-            map_url = f"https://static-maps.yandex.ru/1.x/?ll={st.session_state.lon},{st.session_state.lat}&z=13&l=map&size=450,300&pt={st.session_state.lon},{st.session_state.lat},pm2rdl"
+            # FIX: Přidán parametr &lang=en_US pro vynucení latinky v mapě
+            map_url = f"https://static-maps.yandex.ru/1.x/?ll={st.session_state.lon},{st.session_state.lat}&z=13&l=map&size=450,300&pt={st.session_state.lon},{st.session_state.lat},pm2rdl&lang=en_US"
             r = requests.get(map_url, timeout=5)
             if r.status_code == 200:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f_map:
@@ -291,7 +292,6 @@ if st.session_state.tmy_df is not None:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
             fig7.savefig(f.name, dpi=100); pdf.image(f.name, x=110, y=15, w=80)
         
-        # OPRAVA HORIZONTÁLNÍHO PROSTORU - explicitní nastavení X a šířky
         pdf.set_y(100); pdf.set_text_color(0, 0, 0); pdf.set_font(pdf.font_family, "B", 11)
         pdf.set_x(10); pdf.cell(0, 8, cz("TABULKA BILANCE BIVALENCE"), ln=True)
         pdf.set_font(pdf.font_family, "", 10)
@@ -306,4 +306,4 @@ if st.session_state.tmy_df is not None:
     with st.sidebar:
         st.divider()
         if st.button("🚀 GENEROVAT PDF REPORT", type="primary"):
-            st.download_button("📥 Stáhnout PDF", generate_pdf_v68(), f"Report_{nazev_projektu}.pdf")
+            st.download_button("📥 Stáhnout PDF", generate_pdf_v69(), f"Report_{nazev_projektu}.pdf")
