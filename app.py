@@ -73,7 +73,7 @@ with st.sidebar:
         1. **Lokalita:** Vyhledejte místo nebo klikněte do mapy.
         2. **TMY:** Stiskněte tlačítko pro stažení klimatických dat.
         3. **Parametry:** Zvolte metodiku: **Faktury** (výpočet se zkalibruje podle reálné roční spotřeby z faktur) nebo **Projekt** (výpočet vychází z výpočtové tepelné ztráty budovy a počtu osob pro TUV). Nastavte ztrátu a počet strojů v kaskádě.
-        4. **Charakteristika:** Můžete nahrát CSV s výkonovými daty TČ.
+        4. **Charakteristika:** Můžete nahrát CSV s výkonovými daty TČ a nebo charakteristiku přepsat v tabulce v části Technologie.
         5. **Report:** Po výpočtu stáhněte PDF report v dolní části.
         """)
     
@@ -329,3 +329,4 @@ if st.session_state.tmy_df is not None:
         st.divider()
         if st.button("🚀 GENEROVAT PDF REPORT", type="primary"):
             st.download_button("📥 Stáhnout PDF", generate_pdf_final(), f"Report_{nazev_projektu}.pdf")
+
